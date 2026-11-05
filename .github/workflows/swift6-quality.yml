@@ -1,0 +1,288 @@
+name: Swift 6 Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Exact base commit for the branch-wide comparison
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift6-quality-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  classify_change:
+    name: classify-change
+    runs-on: ubuntu-latest
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
+      requires_full: ${{ steps.classify.outputs.requires_full }}
+      base_sha: ${{ steps.classify.outputs.base_sha }}
+      head_sha: ${{ steps.classify.outputs.head_sha }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          MANUAL_BASE_SHA: ${{ inputs.base_sha }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request|push)
+              base_sha="$EVENT_BASE_SHA"
+              ;;
+            workflow_dispatch)
+              base_sha="$MANUAL_BASE_SHA"
+              ;;
+            *)
+              echo "Unsupported event for exact change classification: $GITHUB_EVENT_NAME" >&2
+              exit 2
+              ;;
+          esac
+          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+            echo "Exact base commit is required; refusing a partial comparison." >&2
+            exit 2
+          fi
+          python3 scripts/ci/classify_changes.py \
+            --base "$base_sha" \
+            --head "$GITHUB_SHA" \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+  lightweight_checks:
+    name: lightweight-checks
+    needs: classify_change
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run common lightweight checks
+        run: >-
+          bash scripts/ci/run_lightweight_checks.sh
+          '${{ needs.classify_change.outputs.base_sha }}'
+          '${{ needs.classify_change.outputs.head_sha }}'
+
+  format_swift:
+    name: format-swift
+    needs: [classify_change, lightweight_checks]
+    if: needs.classify_change.outputs.requires_full == 'true'
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Swift formatting
+        env:
+          BASE_SHA: ${{ needs.classify_change.outputs.base_sha }}
+        run: |
+          git cat-file -e "${BASE_SHA}^{commit}"
+          changed_files="$(git diff --name-only --diff-filter=ACMR "${BASE_SHA}" "${GITHUB_SHA}" -- \
+            "Universe Keyboard" "Keyboard" "Packages" "UniverseKeyboardTests" "KeyboardTests" "KeyboardExtensionTests")"
+          while IFS= read -r file; do
+            [[ "${file}" == *.swift ]] || continue
+            xcrun swift-format lint --strict --configuration .swift-format "${file}"
+          done <<< "${changed_files}"
+
+  test_keyboardcore:
+    name: test-keyboardcore
+    needs: [classify_change, lightweight_checks]
+    if: needs.classify_change.outputs.requires_full == 'true'
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test KeyboardCore
+        run: swift test --package-path Packages/KeyboardCore
+
+  test_rimebridge:
+    name: test-rimebridge
+    needs: [classify_change, lightweight_checks]
+    if: needs.classify_change.outputs.requires_full == 'true'
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare pinned RIME artifacts
+        run: bash scripts/ensure_rime_vendor.sh fetch
+
+      - name: Ensure iPhone 17 Pro simulator
+        run: bash scripts/ci/ensure_iphone_17_pro_simulator.sh
+
+      # The checked-in package binaries intentionally target iOS; test them on
+      # the same simulator platform used by the host app.
+      - name: Test RimeBridge on iOS Simulator
+        run: |
+          xcodebuild \
+            -project "Universe Keyboard.xcodeproj" \
+            -scheme "RimeBridgeTests" \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            CODE_SIGNING_ALLOWED=NO \
+            SWIFT_VERSION=6.0 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            SWIFT_SUPPRESS_WARNINGS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            test
+
+  test_app_keyboard:
+    name: test-app-keyboard
+    needs: [classify_change, lightweight_checks]
+    if: needs.classify_change.outputs.requires_full == 'true'
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare pinned RIME artifacts
+        run: bash scripts/ensure_rime_vendor.sh fetch
+
+      - name: Ensure iPhone 17 Pro simulator
+        run: bash scripts/ci/ensure_iphone_17_pro_simulator.sh
+
+      - name: Test app and keyboard contracts on iOS Simulator
+        run: |
+          xcodebuild \
+            -project "Universe Keyboard.xcodeproj" \
+            -scheme "Universe Keyboard" \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            CODE_SIGNING_ALLOWED=NO \
+            SWIFT_VERSION=6.0 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            SWIFT_SUPPRESS_WARNINGS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            test
+
+  test_rime_sync_keychain:
+    name: test-rime-sync-keychain
+    needs: [classify_change, lightweight_checks]
+    if: needs.classify_change.outputs.requires_full == 'true'
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare pinned RIME artifacts
+        run: bash scripts/ensure_rime_vendor.sh fetch
+
+      - name: Ensure iPhone 17 Pro simulator
+        run: bash scripts/ci/ensure_iphone_17_pro_simulator.sh
+
+      # This focused integration test needs a signed Simulator host to access
+      # Keychain. An ad-hoc identity avoids requiring a team signing secret.
+      - name: Test RIME Keychain integration on iOS Simulator
+        run: |
+          xcodebuild \
+            -project "Universe Keyboard.xcodeproj" \
+            -scheme "Universe Keyboard" \
+            -configuration Debug \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            SWIFT_VERSION=6.0 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            SWIFT_SUPPRESS_WARNINGS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            -only-testing:UniverseKeyboardTests/RimeSyncModelTests/testRimeSyncSecretStorePersistsUpdatesAndDeletesAUniqueKeychainItem \
+            test
+
+  build_release:
+    name: build-release
+    needs: [classify_change, lightweight_checks]
+    if: needs.classify_change.outputs.requires_full == 'true'
+    runs-on: macos-26
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare pinned RIME artifacts
+        run: bash scripts/ensure_rime_vendor.sh fetch
+
+      - name: Ensure iPhone 17 Pro simulator
+        run: bash scripts/ci/ensure_iphone_17_pro_simulator.sh
+
+      - name: Build Swift 6 app and keyboard extension for release
+        run: |
+          xcodebuild \
+            -project "Universe Keyboard.xcodeproj" \
+            -scheme "Universe Keyboard" \
+            -configuration Release \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+            CODE_SIGNING_ALLOWED=NO \
+            SWIFT_VERSION=6.0 \
+            SWIFT_STRICT_CONCURRENCY=complete \
+            SWIFT_SUPPRESS_WARNINGS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            build
+
+  final_quality_gate:
+    name: final-quality-gate
+    if: always()
+    needs:
+      [
+        classify_change,
+        lightweight_checks,
+        format_swift,
+        test_keyboardcore,
+        test_rimebridge,
+        test_app_keyboard,
+        test_rime_sync_keychain,
+        build_release,
+      ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Require the classified gate results
+        env:
+          CLASSIFY_RESULT: ${{ needs.classify_change.result }}
+          LIGHTWEIGHT_RESULT: ${{ needs.lightweight_checks.result }}
+          REQUIRES_FULL: ${{ needs.classify_change.outputs.requires_full }}
+          FORMAT_RESULT: ${{ needs.format_swift.result }}
+          KEYBOARDCORE_RESULT: ${{ needs.test_keyboardcore.result }}
+          RIMEBRIDGE_RESULT: ${{ needs.test_rimebridge.result }}
+          APP_KEYBOARD_RESULT: ${{ needs.test_app_keyboard.result }}
+          KEYCHAIN_RESULT: ${{ needs.test_rime_sync_keychain.result }}
+          RELEASE_RESULT: ${{ needs.build_release.result }}
+        run: >-
+          bash scripts/ci/verify_final_gate.sh
+          "$CLASSIFY_RESULT"
+          "$LIGHTWEIGHT_RESULT"
+          "$REQUIRES_FULL"
+          "$FORMAT_RESULT"
+          "$KEYBOARDCORE_RESULT"
+          "$RIMEBRIDGE_RESULT"
+          "$APP_KEYBOARD_RESULT"
+          "$KEYCHAIN_RESULT"
+          "$RELEASE_RESULT"

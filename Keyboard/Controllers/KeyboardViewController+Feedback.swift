@@ -1,0 +1,211 @@
+import KeyboardCore
+import RimeBridge
+import UIKit
+
+extension KeyboardViewController {
+    func emitKeyPressFeedback() {
+        emitFeedback(for: .tap)
+    }
+
+    func emitKeyPressFeedbackIfNeeded(for sender: UIButton) {
+        let identifier = ObjectIdentifier(sender)
+        guard keyPressFeedbackEmittedButtonIDs.remove(identifier) == nil else {
+            return
+        }
+        emitKeyPressFeedback()
+    }
+
+    func emitFeedback(for event: KeyboardFeedbackEvent) {
+        // 调节态的按键触觉防御；不据此推断系统震动的来源。
+        guard !isKeyboardHeightAdjusting else { return }
+        switch event {
+        case .tap, .commit:
+            playHaptic()
+            playKeyClick()
+
+        case .modeEnter:
+            playModeEnterHaptic()
+
+        case .`repeat`:
+            break
+
+        case .preview:
+            break
+        }
+    }
+
+    func playKeyClick() {
+        guard cachedKeyClickEnabled else {
+            return
+        }
+        UIDevice.current.playInputClick()
+    }
+
+    func playHaptic(intensity: CGFloat? = nil) {
+        // 调节态的按键触觉防御；不据此推断系统震动的来源。
+        guard !isKeyboardHeightAdjusting else { return }
+        guard cachedHapticEnabled else {
+            return
+        }
+        hapticGenerator.impactOccurred(intensity: intensity ?? cachedHapticIntensity)
+        hapticGenerator.prepare()
+    }
+
+    func playModeEnterHaptic() {
+        // 调节态的按键触觉防御；不据此推断系统震动的来源。
+        guard !isKeyboardHeightAdjusting else { return }
+        guard cachedHapticEnabled else {
+            return
+        }
+        modeEnterHapticGenerator.impactOccurred(intensity: 1.0)
+        modeEnterHapticGenerator.prepare()
+    }
+
+    /// One click per scrub step or repeat tick. The press click is separate and
+    /// must not be counted here. Tap lift does not call this.
+    func playRepeatFeedback(effectiveDeleteCount: Int) {
+        playKeyClick()
+        if effectiveDeleteCount.isMultiple(of: 4) {
+            playHaptic(intensity: max(0.25, cachedHapticIntensity * 0.7))
+        }
+    }
+
+    /// One heavier confirmation when the finger enters the trash bubble.
+    func playDeleteBubbleArmedFeedback() {
+        playKeyClick()
+        playHaptic(intensity: 1.0)
+    }
+
+    func refreshCachedSettings(source: String = "unspecified") {
+        let defaults = sharedDefaults
+
+        // 诊断开关与反馈设置使用同一生命周期快照；候选触控链路不自行轮询共享偏好。
+        CandidateTouchDiagnostics.refreshFromSharedSettings()
+        #if DEBUG
+            applyDebugKeyHitboxOverlaySetting()
+        #endif
+
+        let rawSound = defaults?.object(forKey: KeyboardFeedbackSettingsKey.keyClickEnabled)
+        let rawHaptic = defaults?.object(forKey: KeyboardFeedbackSettingsKey.hapticEnabled)
+        let rawHapticLevel = defaults?.object(forKey: KeyboardFeedbackSettingsKey.hapticLevel)
+        let rawPairedSymbolCompletion = defaults?.object(
+            forKey: KeyboardInputSettingsKey.pairedSymbolCompletionEnabled
+        )
+        let rawPostCommitContinuation = defaults?.object(
+            forKey: KeyboardInputSettingsKey.postCommitContinuationEnabled
+        )
+        let typoExperimentSettings = TypoCorrectionExperimentalSettings.load(from: defaults)
+
+        cachedKeyClickEnabled = rawSound as? Bool ?? true
+        cachedHapticEnabled = rawHaptic as? Bool ?? false
+        cachedHapticLevel = feedbackLevelValue(rawHapticLevel)
+        cachedHapticIntensity = CGFloat(cachedHapticLevel.hapticIntensity)
+        let storedLiquidGlass =
+            defaults?.bool(
+                forKey: KeyboardAppearanceSettingsKey.liquidGlassMaterialEnabled
+            ) ?? false
+        #if DEBUG
+            let liquidGlassDebugBuild = true
+        #else
+            let liquidGlassDebugBuild = false
+        #endif
+        cachedLiquidGlassMaterialEnabled = liquidGlassMaterialEffectivelyEnabled(
+            storedValue: storedLiquidGlass,
+            isDebugBuild: liquidGlassDebugBuild
+        )
+        controller.isPairedSymbolCompletionEnabled = rawPairedSymbolCompletion as? Bool ?? true
+        controller.setPostCommitContinuationEnabled(rawPostCommitContinuation as? Bool ?? true)
+        controller.typoCorrectionExperimentalEdits = typoExperimentSettings.experimentalEdits
+        controller.typoCorrectionLearningSnapshot = typoCorrectionLearningStore.snapshot()
+        cachedTypingIntelligenceEnabled =
+            defaults?.bool(
+                forKey: TypingStatisticsStorageKey.enabled
+            ) ?? false
+        cachedTypingIntelligenceResetEpoch =
+            defaults?.integer(
+                forKey: TypingStatisticsStorageKey.resetEpoch
+            ) ?? 0
+
+        // Layout / T9 readiness: snapshot only — never read UserDefaults on the key path.
+        cachedLayoutStyle = KeyboardLayoutStyle.resolve(
+            defaults?.string(forKey: KeyboardLayoutSettingsKey.layoutStyle)
+        )
+        let markerData = defaults?.data(forKey: RimeT9Readiness.SettingsKey.marker)
+        let marker = markerData.flatMap { try? JSONDecoder().decode(RimeT9ReadinessMarker.self, from: $0) }
+        var onDiskFingerprint: String?
+        // 原型说明：资源优先来自键盘扩展本地沙盒；App Group 仅在本地不可用时作为回退。
+        if let (sharedDir, _) = RimeConfigManager.localRuntimeDirectories() {
+            let t9URL = URL(fileURLWithPath: sharedDir)
+                .appendingPathComponent("t9.schema.yaml")
+            onDiskFingerprint = RimeT9Readiness.fingerprint(ofFileAt: t9URL)
+        } else if let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: Self.appGroupID
+        ) {
+            let t9URL =
+                container
+                .appendingPathComponent("Rime/shared/t9.schema.yaml")
+            onDiskFingerprint = RimeT9Readiness.fingerprint(ofFileAt: t9URL)
+        }
+        // ADR 0026: must pass per-layout bindings. Omitting them falls back to
+        // legacy "base must be rime_ice for T9", which keeps 26-key chrome when
+        // the 26-key slot is 万象 (`wanxiang`) even if layout preference is nine-key
+        // and fog T9 readiness is matched.
+        let selection = RimeRuntimeSelection.resolve(
+            baseSchemaID: defaults?.string(forKey: "rime_active_schema"),
+            layoutRawValue: defaults?.string(forKey: KeyboardLayoutSettingsKey.layoutStyle),
+            readinessMarker: marker,
+            onDiskFingerprint: onDiskFingerprint,
+            schemeBinding26: defaults?.string(forKey: KeyboardLayoutSettingsKey.schemeBinding26),
+            schemeBinding9: defaults?.string(forKey: KeyboardLayoutSettingsKey.schemeBinding9)
+        )
+        cachedT9ReadinessMatched = selection.t9ReadinessMatched
+        // Provisional chrome from readiness (before/while engine is offline).
+        // Once librime has a realized selection, that wins over the marker snapshot.
+        if selection.usesT9InputSemantics {
+            cachedLayoutStyle = .nineKey
+        } else {
+            cachedLayoutStyle = .twentySixKey
+        }
+        controller.usesT9InputSemantics = selection.usesT9InputSemantics
+        if let engine = controller.underlyingRimeEngine as? RimeEngineImpl {
+            applyRealizedRuntimeSelection(from: engine)
+        }
+
+        if cachedHapticEnabled {
+            hapticGenerator.prepare()
+            modeEnterHapticGenerator.prepare()
+        }
+    }
+
+    func feedbackLevelValue(_ rawValue: Any?) -> KeyboardFeedbackLevel {
+        if let value = rawValue as? Int {
+            return KeyboardFeedbackLevel.clamped(value)
+        }
+        if let value = rawValue as? NSNumber {
+            return KeyboardFeedbackLevel.clamped(value.intValue)
+        }
+        return .defaultLevel
+    }
+
+    func logKeyPerformance(_ message: String, startTime: CFTimeInterval) {
+        let elapsed = (CACurrentMediaTime() - startTime) * 1000
+        Logger.shared.performance("\(message) (\(String(format: "%.1f", elapsed))ms)")
+    }
+
+    #if DEBUG
+        /// Visibility / settings snapshot only. Never call from `hitTest`.
+        func applyDebugKeyHitboxOverlaySetting() {
+            let enabled = DebugKeyHitboxConfiguration.isEnabled(
+                in: sharedDefaults,
+                isDebugBuild: true
+            )
+            DebugHitboxOverlayPresentation.isShowing = enabled
+            (rootStack as? KeyboardInputHitAreaStackView)?
+                .setShowsRealTouchRangeOverlay(enabled)
+            (candidateBar as? CandidateBarView)?.refreshDebugHitboxOverlay()
+            t9PinyinPathBarView?.refreshDebugHitboxOverlay()
+            (candidateExpandedPanel as? ExpandedCandidatePanelContainerView)?
+                .refreshDebugHitboxOverlay()
+        }
+    #endif
+}

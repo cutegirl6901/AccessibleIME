@@ -1,0 +1,362 @@
+import BackgroundTasks
+import Dispatch
+import Foundation
+import KeyboardCore
+import Synchronization
+
+/// 用户可以分别订阅 RIME 标准资料和 Universe 设置的同步通知。
+nonisolated enum RimeSyncNotificationScope: String, CaseIterable, Hashable, Sendable {
+    case standardRimeData
+    case privateSettings
+
+    var title: String {
+        switch self {
+        case .standardRimeData: return "RIME 标准同步"
+        case .privateSettings: return "Universe 设置同步"
+        }
+    }
+
+    var notificationSubject: String {
+        switch self {
+        case .standardRimeData: return "RIME 常用词和标准资料"
+        case .privateSettings: return "Universe App 设置"
+        }
+    }
+
+    var notificationDetail: String {
+        switch self {
+        case .standardRimeData:
+            return "常用词、候选学习和 RIME 标准资料的同步状态。"
+        case .privateSettings:
+            return "方案、候选数量等 Universe App 设置的同步状态。"
+        }
+    }
+}
+
+nonisolated enum RimeSyncNotificationMode: Equatable, Sendable {
+    case manual
+    case automatic
+
+    var startedTitle: String { self == .manual ? "开始同步" : "开始自动同步" }
+    var completedTitle: String { self == .manual ? "同步完成" : "自动同步完成" }
+    var failedTitle: String { self == .manual ? "同步失败" : "自动同步失败" }
+}
+
+nonisolated struct RimeSyncNotificationPayload: Equatable, Sendable {
+    let title: String
+    let body: String
+}
+
+/// 同步通知只表达阶段状态，不携带目录、词典、恢复码或输入内容。
+nonisolated enum RimeSyncNotificationEvent: Equatable, Sendable {
+    case phaseStarted(
+        mode: RimeSyncNotificationMode,
+        scope: RimeSyncNotificationScope,
+        completedScopes: Set<RimeSyncNotificationScope>,
+        pendingScopes: Set<RimeSyncNotificationScope>
+    )
+    case completed(
+        mode: RimeSyncNotificationMode,
+        scopes: Set<RimeSyncNotificationScope>
+    )
+    case failed(
+        mode: RimeSyncNotificationMode,
+        failedScope: RimeSyncNotificationScope,
+        completedScopes: Set<RimeSyncNotificationScope>,
+        pendingScopes: Set<RimeSyncNotificationScope>
+    )
+
+    /// 根据用户订阅的子项生成最终文案。返回 nil 表示本事件与订阅范围无关。
+    func payload(enabledScopes: Set<RimeSyncNotificationScope>) -> RimeSyncNotificationPayload? {
+        switch self {
+        case .phaseStarted(let mode, let scope, let completedScopes, let pendingScopes):
+            guard enabledScopes.contains(scope) else { return nil }
+            // 前一阶段已被订阅时，开始通知已把后续订阅阶段合并进去，避免重复提醒。
+            guard completedScopes.isDisjoint(with: enabledScopes) else { return nil }
+            let announcedScopes = enabledScopes.intersection(pendingScopes.union([scope]))
+            return RimeSyncNotificationPayload(
+                title: mode.startedTitle,
+                body: "正在同步\(Self.subject(for: announcedScopes))。"
+            )
+
+        case .completed(let mode, let scopes):
+            let completedScopes = enabledScopes.intersection(scopes)
+            guard !completedScopes.isEmpty else { return nil }
+            return RimeSyncNotificationPayload(
+                title: mode.completedTitle,
+                body: "\(Self.subject(for: completedScopes))已更新。"
+            )
+
+        case .failed(let mode, let failedScope, let completedScopes, let pendingScopes):
+            // 同一范围不能既成功又失败。调用方应保持这个不变量；这里再做一次
+            // fail-closed 归一化，避免生命周期竞态生成自相矛盾的用户通知。
+            let consistentCompletedScopes = completedScopes.subtracting([failedScope])
+            let selectedCompleted = enabledScopes.intersection(consistentCompletedScopes)
+            let selectedPending = enabledScopes.intersection(pendingScopes)
+
+            if enabledScopes.contains(failedScope) {
+                var messages: [String] = []
+                if !selectedCompleted.isEmpty {
+                    messages.append("\(Self.subject(for: selectedCompleted))已更新")
+                }
+                messages.append("\(failedScope.notificationSubject)未完成")
+                if !selectedPending.isEmpty {
+                    messages.append("\(Self.subject(for: selectedPending))尚未开始")
+                }
+                return RimeSyncNotificationPayload(
+                    title: mode.failedTitle,
+                    body: messages.joined(separator: "；") + "。请打开 App 查看原因。"
+                )
+            }
+
+            // 用户没有订阅失败阶段，但其订阅的前置阶段已经成功，仍应给出准确完成反馈。
+            guard !selectedCompleted.isEmpty else { return nil }
+            return RimeSyncNotificationPayload(
+                title: mode.completedTitle,
+                body: "\(Self.subject(for: selectedCompleted))已更新。"
+            )
+        }
+    }
+
+    private static func subject(for scopes: Set<RimeSyncNotificationScope>) -> String {
+        let hasStandard = scopes.contains(.standardRimeData)
+        let hasPrivate = scopes.contains(.privateSettings)
+        switch (hasStandard, hasPrivate) {
+        case (true, true): return "RIME 常用词、标准资料和 Universe App 设置"
+        case (true, false): return RimeSyncNotificationScope.standardRimeData.notificationSubject
+        case (false, true): return RimeSyncNotificationScope.privateSettings.notificationSubject
+        case (false, false): return "同步资料"
+        }
+    }
+}
+
+/// 管理一次 `BGProcessingTask` 的终止所有权，确保过期与正常返回只有一方完成任务。
+///
+/// expiration callback 的调用队列不受 App 控制，因此这里必须同步抢占终止权，
+/// 不能先异步 hop 到 MainActor，否则正常返回可能越过系统已经发出的过期信号。
+nonisolated final class RimeAutomaticSyncTaskLifecycle: Sendable {
+    enum CompletionClaim: Equatable, Sendable {
+        case succeeded
+        case failed
+    }
+
+    private enum State: Sendable {
+        case active
+        case expirationClaimed
+        case operationClaimed
+    }
+
+    private let state = Mutex(State.active)
+
+    /// expiration 在回调线程同步抢占终止权；返回 `true` 时调用方必须立即取消操作
+    /// 并以失败完成系统任务。
+    @discardableResult
+    func claimExpiration() -> Bool {
+        state.withLock { state in
+            guard state == .active else { return false }
+            state = .expirationClaimed
+            return true
+        }
+    }
+
+    /// 正常返回只有在 expiration 尚未抢占时才能取得终止权。
+    func claimOperationCompletion(operationSucceeded: Bool) -> CompletionClaim? {
+        state.withLock { state in
+            guard state == .active else { return nil }
+            state = .operationClaimed
+            return operationSucceeded ? .succeeded : .failed
+        }
+    }
+}
+
+/// 后台自动同步的系统接入点。
+///
+/// `BGProcessingTask` 的执行时刻由 iOS 决定；这里仅提交最早可执行时间，并在每次
+/// 已验证的同步或跳过后安排下一次机会，绝不把它描述为定时器或实时服务。
+@MainActor
+final class RimeAutomaticSyncScheduler {
+    static let shared = RimeAutomaticSyncScheduler()
+    static let taskIdentifier = "com.DoubleShy0N.Universe-Keyboard.rime-standard-sync"
+
+    /// 注册闭包继承 `MainActor` 隔离，因此系统必须从主队列进入该同步边界。
+    /// 实际同步仍由 `handle(_:)` 创建的可取消异步任务执行。
+    static let launchHandlerQueue = DispatchQueue.main
+
+    private var hasRegisteredTask = false
+
+    private init() {}
+
+    func registerBackgroundTask() {
+        guard !hasRegisteredTask else { return }
+        hasRegisteredTask = true
+
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: Self.taskIdentifier,
+            using: Self.launchHandlerQueue
+        ) { task in
+            guard let processingTask = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            Self.shared.handle(processingTask)
+        }
+    }
+
+    /// 在设置变更、手动同步完成和主 App 进入后台时调用。
+    func refreshSchedule(defaults: UserDefaults = .standard, isEnabled: Bool = true) {
+        // UI-only fixtures must not read production preferences or cancel real
+        // pending background work on the shared Simulator.
+        guard isEnabled else { return }
+
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
+
+        guard let earliestBeginDate = nextEligibleDate(defaults: defaults) else {
+            return
+        }
+
+        let request = BGProcessingTaskRequest(identifier: Self.taskIdentifier)
+        request.requiresNetworkConnectivity = true
+        request.requiresExternalPower = false
+        request.earliestBeginDate = earliestBeginDate
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            Logger.shared.info(
+                "rimeSync automatic background task scheduled cadence="
+                    + "\(automaticCadence(defaults: defaults).rawValue)",
+                category: .config
+            )
+        } catch {
+            // 提交被系统拒绝时不改变用户的同步开关；下次前台或进入后台会重新尝试。
+            Logger.shared.warning(
+                "rimeSync automatic background task scheduling failed "
+                    + "code=\(RimeSyncFolderAccess.diagnosticErrorCode(for: error))",
+                category: .config
+            )
+            Logger.shared.requestFlush()
+        }
+    }
+
+    private func handle(_ task: BGProcessingTask) {
+        Logger.shared.info("rimeSync automatic background task started", category: .config)
+
+        let lifecycle = RimeAutomaticSyncTaskLifecycle()
+        let includesPrivateSettings =
+            (UserDefaults.standard.object(
+                forKey: RimeSyncStorageKey.automaticPrivateSettingsEnabled
+            ) as? Bool) ?? true
+        let diagnosticSession = RimeSyncDiagnosticSession(
+            source: .backgroundAutomatic,
+            requestedPhases: includesPrivateSettings
+                ? [.standardRimeData, .privateSettings]
+                : [.standardRimeData]
+        )
+        diagnosticSession.begin()
+        let operation = Task { @MainActor in
+            let model = RimeSyncViewModel(rimeStore: RimeSettingsStore())
+            let result = await model.synchronizeAutomatically(
+                diagnosticSession: diagnosticSession
+            )
+            await Self.finishOperation(
+                result: result,
+                lifecycle: lifecycle,
+                recordDiagnosticTerminal: {
+                    diagnosticSession.commitProposedTerminal()
+                },
+                notifyCompletion: { await model.notifyAutomaticCompletion() },
+                reschedule: { self.refreshSchedule() },
+                completeTask: { task.setTaskCompleted(success: $0) }
+            )
+        }
+        task.expirationHandler = {
+            guard
+                Self.expireOperation(
+                    lifecycle: lifecycle,
+                    recordExpiration: {
+                        diagnosticSession.terminal(.expired)
+                    },
+                    cancel: { operation.cancel() },
+                    completeTask: { task.setTaskCompleted(success: $0) }
+                )
+            else { return }
+            diagnosticSession.terminal(.expired)
+            Task { @MainActor in
+                Logger.shared.warning("rimeSync automatic background task expired", category: .config)
+                Logger.shared.requestFlush()
+                Self.shared.refreshSchedule()
+            }
+        }
+    }
+
+    /// 可控的正常返回 seam。只有取得终止权的一方可以完成 BGTask 或发布完成通知。
+    @discardableResult
+    static func finishOperation(
+        result: RimeAutomaticSyncResult,
+        lifecycle: RimeAutomaticSyncTaskLifecycle,
+        recordDiagnosticTerminal: () -> Void = {},
+        notifyCompletion: () async -> Void,
+        reschedule: () -> Void,
+        completeTask: (Bool) -> Void
+    ) async -> Bool {
+        guard
+            let claim = lifecycle.claimOperationCompletion(
+                operationSucceeded: result.completedSuccessfully
+            )
+        else {
+            return false
+        }
+        recordDiagnosticTerminal()
+        let succeeded = claim == .succeeded
+        reschedule()
+        completeTask(succeeded)
+        if succeeded, case .completed = result {
+            await notifyCompletion()
+        }
+        return true
+    }
+
+    /// expiration callback 直接使用的非隔离 seam；失败完成不等待 MainActor hop。
+    @discardableResult
+    nonisolated static func expireOperation(
+        lifecycle: RimeAutomaticSyncTaskLifecycle,
+        recordExpiration: () -> Void = {},
+        cancel: () -> Void,
+        completeTask: (Bool) -> Void
+    ) -> Bool {
+        guard lifecycle.claimExpiration() else { return false }
+        // Persist the system-owned reason before cancellation can resume the
+        // async operation and propose a weaker `.cancelled` terminal.
+        recordExpiration()
+        cancel()
+        completeTask(false)
+        return true
+    }
+
+    private func nextEligibleDate(defaults: UserDefaults) -> Date? {
+        guard defaults.bool(forKey: RimeSyncStorageKey.automaticSyncEnabled),
+            (defaults.object(forKey: RimeSyncStorageKey.automaticStandardRimeDataEnabled) as? Bool)
+                ?? true,
+            defaults.string(forKey: RimeSyncStorageKey.provider) == RimeSyncProvider.localFolder.rawValue,
+            defaults.data(forKey: RimeSyncStorageKey.folderBookmark) != nil,
+            !defaults.bool(forKey: RimeSyncStorageKey.folderSelectionNeedsRepair)
+        else {
+            return nil
+        }
+
+        return RimeAutomaticSyncPolicy.nextEligibleDate(
+            lastAutomaticAttempt: defaults.object(
+                forKey: RimeSyncStorageKey.lastAutomaticAttempt
+            ) as? Date,
+            cadence: automaticCadence(defaults: defaults),
+            retryNotBefore: defaults.object(
+                forKey: RimeSyncStorageKey.automaticRetryNotBefore
+            ) as? Date
+        )
+    }
+
+    private func automaticCadence(defaults: UserDefaults) -> RimeAutomaticSyncCadence {
+        RimeAutomaticSyncCadence(
+            rawValue: defaults.string(forKey: RimeSyncStorageKey.automaticSyncCadence) ?? ""
+        ) ?? .daily
+    }
+}

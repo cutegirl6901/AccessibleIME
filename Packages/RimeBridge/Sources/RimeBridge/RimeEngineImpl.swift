@@ -1,0 +1,387 @@
+import Foundation
+import KeyboardCore
+import QuartzCore
+import RimeBridgeObjC
+
+/// 基于真实 librime 引擎的 RimeEngine 协议实现。
+///
+/// ── 架构概述（ObjC 桥接模式）──────────────────────────────────
+/// 本文件是 Swift → ObjC → C  三层桥接的中间层：
+///
+///   Swift (此文件)  ←→  ObjC (RimeSessionManager)  ←→  C (librime API)
+///       ↓                        ↓                          ↓
+///   RimeEngine 协议         RimeSessionManager.m         rime_api.h
+///   (纯 Swift 接口)       (封装 C 指针/内存管理)      (官方 C API)
+///
+/// 为什么需要 ObjC 中间层？
+/// - librime 是 C 库，C 头文件在 Swift 中不能直接使用
+/// - ObjC 可以包含 C 头文件（通过 ObjC++），Swift 可以调用 ObjC 方法
+/// - RimeSessionManager 封装了 C 指针管理、内存释放等危险操作
+///
+/// ── 职责 ─────────────────────────────────────────────────────
+/// 1. 键盘按键码翻译（如 "n" → 0x006e, "BackSpace" → 0xFF08）
+/// 2. RIME 输出的解析（NSDictionary → RimeOutput）
+/// 3. Session 生命周期管理（创建/销毁/恢复）
+/// 4. Schema（输入方案）快速选择与异常恢复验证
+/// 5. 输入路径异常诊断；逐键成功诊断仅在 Debug，不在按键事件中执行配置部署或磁盘同步
+///
+/// ── 线程安全 ─────────────────────────────────────────────────
+/// librime 不是线程安全的。所有 RIME API 调用必须在同一线程。
+/// 键盘扩展中所有输入事件都在主线程，所以这不存在问题。
+/// 但不要从后台队列调用 processKey/selectCandidate。
+///
+/// ── 配置路径 ─────────────────────────────────────────────────
+/// 使用 App Group 共享容器，主 App 和键盘扩展都可读写：
+/// - sharedDataDir: AppGroup/Rime/shared/（YAML schema、dict、OpenCC）
+/// - userDataDir: AppGroup/Rime/user/（user.yaml、同步目录）
+public final class RimeEngineImpl: RimeEngine {
+
+    /// ObjC 桥接层实例（封装 librime C API）
+    public let bridge: RimeSessionManager
+    /// Immutable shared runtime directory; always used for readiness fingerprinting.
+    public let sharedDataDir: String
+    public let userDataDir: String
+    var nextRecoveryAttemptTime: CFTimeInterval = 0
+    /// Last raw input accepted by this process-local session. If librime drops
+    /// the session between key events, restore this prefix before applying the
+    /// next key so the bridge's empty-session recovery cannot consume it.
+    private var lastKnownRawInput = ""
+    private var isSuspendedForVisibilityChange = false
+    var activeSchemaID = "luna_pinyin"
+    /// Last resolved effective selection (schema + layout semantics).
+    public internal(set) var runtimeSelection: RimeRuntimeSelection?
+    /// Propagates realized selection (including fail-closed) to extension chrome/controller.
+    public var onRuntimeSelectionChanged: ((RimeRuntimeSelection) -> Void)?
+    #if DEBUG
+        /// Content-free timing exposed only to the controlled Simulator preflight.
+        internal var lastLibrimeProcessKeyDurationMs: Double?
+        /// Test-target-only boundary counter for exact auto-anchor mutation budgets.
+        internal private(set) var replaceInputCallCountForTesting = 0
+        /// Content-free counters freeze fail-closed behavior at the native boundary.
+        internal private(set) var processKeyCallCountForTesting = 0
+        internal private(set) var resetSessionCallCountForTesting = 0
+        internal private(set) var recoverSessionCallCountForTesting = 0
+    #endif
+
+    public var diagnosticSessionSnapshot: RimeSessionDiagnosticSnapshot? {
+        let identity = bridge.currentSessionIdentifier()
+        guard identity != 0 else { return nil }
+        return RimeSessionDiagnosticSnapshot(
+            identity: identity,
+            isValid: bridge.isCurrentSessionValid()
+        )
+    }
+
+    // MARK: === Init ===
+
+    /// 初始化 RIME 引擎。
+    ///
+    /// 初始化步骤：
+    ///   1. 创建 RimeSessionManager（ObjC 桥接层）
+    ///   2. setup：配置 RIME traits（目录路径、模块列表）
+    ///   3. initializeEngine：启动 librime 运行时，不进行部署或文件检查
+    ///   4. createSession：创建输入会话（session 是 librime 的核心抽象）
+    ///   5. 诊断日志：记录低成本 librime 版本信息
+    ///   6. Schema 快速选择：健康路径不枚举所有 schema，也不合成测试输入
+    ///
+    /// - Parameters:
+    ///   - sharedDataDir: RIME 共享数据目录（schema、dict 等配置文件）
+    ///   - userDataDir: RIME 用户数据目录（user.yaml、同步等）
+    public init(sharedDataDir: String, userDataDir: String) {
+        let startTime = CACurrentMediaTime()
+
+        self.bridge = RimeSessionManager()
+        self.sharedDataDir = sharedDataDir
+        self.userDataDir = userDataDir
+
+        // ── 1. Setup + Initialize ──────────────────────────────
+        // setup: 设置 RIME 的数据目录和模块列表
+        // initializeEngine: 只启动运行时；部署和配置落盘由主 App 完成。
+        let setupStartTime = CACurrentMediaTime()
+        bridge.setup(withSharedDataDir: sharedDataDir, userDataDir: userDataDir)
+        let setupElapsed = (CACurrentMediaTime() - setupStartTime) * 1000
+
+        let initializeStartTime = CACurrentMediaTime()
+        bridge.initializeEngine()
+        let initializeElapsed = (CACurrentMediaTime() - initializeStartTime) * 1000
+
+        // ── 2. 创建 RIME session ──────────────────────────────
+        // session 是 librime 的核心概念 — 每个 session 维护独立的输入状态
+        // 包括：composition（拼音缓冲区）、candidates（候选列表）、context（上下文）
+        let sessionStartTime = CACurrentMediaTime()
+        bridge.createSession()
+        let sessionElapsed = (CACurrentMediaTime() - sessionStartTime) * 1000
+
+        // ── 3. 保留低成本版本诊断；完整 schema 枚举只在失败恢复时执行 ──
+        let version = bridge.librimeVersion()
+        Logger.shared.info("librime \(version)", category: .engine)
+
+        // ── 4. Schema 快速选择 ────────────────────────────────
+        // 主 App 已负责部署与完整运行时验证。健康冷启动只确认 schema 可以选中，
+        // 不再合成 "ni" 输入或枚举所有 schema；深度验证保留给失败恢复路径。
+        let schemaStartTime = CACurrentMediaTime()
+        let requested = resolveRuntimeSelection()
+        let requestedSchema = requested.effectiveSchemaID
+        // Prefer the 26-key layout binding (may be 万象) over a hard-coded fog/luna pair
+        // when T9 select fails closed.
+        let fallbackCandidate =
+            requested.schemeBinding26
+            ?? (requested.baseSchemaID == "t9" ? "rime_ice" : requested.baseSchemaID)
+        let fallbackSchema =
+            fallbackCandidate == "t9" ? "rime_ice" : fallbackCandidate
+
+        let selected = selectSchemaForStartup(requestedSchema, fallback: fallbackSchema)
+        let schemaElapsed = (CACurrentMediaTime() - schemaStartTime) * 1000
+        applyRealizedSelection(requested: requested, actualSchemaID: selected)
+
+        let elapsed = (CACurrentMediaTime() - startTime) * 1000
+        let startupPhaseSummary = [
+            "setup=\(String(format: "%.1f", setupElapsed))ms",
+            "initialize=\(String(format: "%.1f", initializeElapsed))ms",
+            "session=\(String(format: "%.1f", sessionElapsed))ms",
+            "schema=\(String(format: "%.1f", schemaElapsed))ms",
+        ].joined(separator: " ")
+        Logger.shared.performance(
+            "RIME startup phases \(startupPhaseSummary)"
+        )
+        Logger.shared.performance("Engine init complete", durationMs: elapsed)
+    }
+
+    /// Single resolution path: always fingerprints `sharedDataDir/t9.schema.yaml`.
+    func resolveRuntimeSelection(
+        defaults: UserDefaults? = UserDefaults(suiteName: RimeRuntimeSelectionBridge.appGroupID)
+    ) -> RimeRuntimeSelection {
+        RimeRuntimeSelectionBridge.resolve(defaults: defaults, sharedDataDir: sharedDataDir)
+    }
+
+    /// Store the selection after librime schema selection so chrome/semantics cannot stay on T9
+    /// when the engine fell back to another schema.
+    func applyRealizedSelection(requested: RimeRuntimeSelection, actualSchemaID: String?) {
+        let realized = requested.reconciled(withActualSchemaID: actualSchemaID)
+        publishRuntimeSelection(
+            realized,
+            actualSchemaID: actualSchemaID,
+            requestedSchemaID: requested.effectiveSchemaID
+        )
+        if requested.usesT9InputSemantics, !realized.usesT9InputSemantics {
+            Logger.shared.warning(
+                "T9 requested but not selected by librime; failing closed to 26-key semantics",
+                category: .engine
+            )
+        }
+    }
+
+    /// Publish fail-closed 26-key selection for this runtime lifecycle (no App Group mutation).
+    func publishFailClosedSelection(reason: String) {
+        let requested = resolveRuntimeSelection()
+        // Prefer base as "actual" so requested T9 cannot survive without a live t9 schema.
+        let closed = requested.reconciled(withActualSchemaID: nil)
+        publishRuntimeSelection(
+            closed,
+            actualSchemaID: nil,
+            requestedSchemaID: requested.effectiveSchemaID
+        )
+        Logger.shared.warning(
+            "Published fail-closed runtime selection reason=\(reason) "
+                + "realizedSchema=\(closed.effectiveSchemaID) usesT9=\(closed.usesT9InputSemantics)",
+            category: .engine
+        )
+    }
+
+    private func publishRuntimeSelection(
+        _ realized: RimeRuntimeSelection,
+        actualSchemaID: String?,
+        requestedSchemaID: String
+    ) {
+        runtimeSelection = realized
+        activeSchemaID = actualSchemaID ?? realized.effectiveSchemaID
+        Logger.shared.info(
+            "Runtime selection requested=\(requestedSchemaID) actual=\(actualSchemaID ?? "nil") "
+                + "realizedSchema=\(realized.effectiveSchemaID) "
+                + "realizedLayout=\(realized.effectiveLayoutStyle.rawValue) "
+                + "usesT9=\(realized.usesT9InputSemantics)",
+            category: .engine
+        )
+        onRuntimeSelectionChanged?(realized)
+    }
+
+    deinit {
+        // 释放 librime 资源：销毁 session → finalize 引擎
+        bridge.finalize()
+    }
+
+    // MARK: === RimeEngine 协议实现 ===
+
+    /// 处理一个按键输入。
+    ///
+    /// 处理流程：
+    ///   1. 将 Swift 按键字符（如 "n"）翻译为 X11 keysym（如 0x006e）
+    ///   2. 调用 librime process_key（核心 API）
+    ///   3. 解析返回的 NSDictionary 为 RimeOutput
+    ///
+    /// 完整部署由主 App 的 `RimeDeploymentServicing` 执行；任何配置
+    /// 同步或 maintenance 都不得进入键盘按键热路径。
+    ///
+    /// - Parameter key: Swift 字符串按键（"a", "BackSpace", "space", etc.）
+    /// - Returns: RimeOutput（包含 composition、candidates、committed text）
+    public func processKey(_ key: String) -> KeyboardCore.RimeOutput {
+        #if DEBUG
+            processKeyCallCountForTesting += 1
+        #endif
+        guard restoreMissingSessionCompositionIfNeeded() else {
+            return KeyboardCore.RimeOutput()
+        }
+        let output = processInputKey(key)
+        rememberRawInput(from: output)
+        return output
+    }
+
+    /// Rebuilds the session-owned prefix before forwarding a new key. The
+    /// Objective-C bridge can create a missing session on demand, but it cannot
+    /// know the composition held by KeyboardCore and would otherwise accept only
+    /// the newly pressed key.
+    private func restoreMissingSessionCompositionIfNeeded() -> Bool {
+        guard bridge.currentSessionIdentifier() == 0 else { return true }
+
+        // Copy before recovery. recoverSession() clears the remembered prefix
+        // because an explicit recovery is a fresh session. This automatic path
+        // must keep the prefix when recreation fails, so the next attempt can
+        // restore it and the rejected key is not the only surviving input.
+        let rawInput = lastKnownRawInput
+        recoverSession()
+        guard bridge.currentSessionIdentifier() != 0 else {
+            lastKnownRawInput = rawInput
+            return false
+        }
+        guard !rawInput.isEmpty else { return true }
+
+        let restored = replaceInput(rawInput)
+        let restoredComposition = restored.composition != nil || bridge.isComposing()
+        if !restoredComposition, restored.committedText == nil {
+            lastKnownRawInput = rawInput
+        }
+        return restoredComposition
+    }
+
+    private func rememberRawInput(from output: KeyboardCore.RimeOutput) {
+        if let rawInput = output.rawInput {
+            lastKnownRawInput = rawInput
+        } else if output.committedText != nil || output.composition == nil {
+            lastKnownRawInput = ""
+        }
+    }
+
+    /// 选择指定索引的候选词。
+    /// - Parameter index: 0-based 候选索引
+    /// - Returns: 选择后的 RIME 输出（可能包含新的候选页或 commit）
+    public func selectCandidate(at index: Int) -> KeyboardCore.RimeOutput {
+        let output = chooseCandidate(at: index)
+        rememberRawInput(from: output)
+        return output
+    }
+
+    public func selectCandidate(globalIndex index: Int) -> KeyboardCore.RimeOutput {
+        let output = chooseCandidate(globalIndex: index)
+        rememberRawInput(from: output)
+        return output
+    }
+
+    public func candidateWindow(from globalIndex: Int, limit: Int) -> KeyboardCore.RimeCandidateWindow {
+        readCandidateWindow(from: globalIndex, limit: limit)
+    }
+
+    /// 在 RIME 中删除一个字符（回退拼音）。
+    public func deleteBackward() -> KeyboardCore.RimeOutput {
+        let output = processDeletion()
+        rememberRawInput(from: output)
+        return output
+    }
+
+    /// 用未格式化输入替换当前 RIME composition。
+    public func replaceInput(_ input: String) -> KeyboardCore.RimeOutput {
+        #if DEBUG
+            replaceInputCallCountForTesting += 1
+        #endif
+        let output = parseOutput(bridge.replaceInput(input))
+        rememberRawInput(from: output)
+        return output
+    }
+
+    /// 重置当前 RIME session 的输入状态（清除拼音 composition）。
+    public func resetSession() {
+        #if DEBUG
+            resetSessionCallCountForTesting += 1
+        #endif
+        bridge.clearComposition()
+        lastKnownRawInput = ""
+    }
+
+    /// 宿主展示自己的表情/键盘后，旧 session 可能仍有 id 但已经不能处理输入。
+    /// 先重建 session；若 librime 已无法创建 session，则重新初始化整个引擎。
+    public func recoverSession() {
+        #if DEBUG
+            recoverSessionCallCountForTesting += 1
+        #endif
+        restoreInputSession()
+        lastKnownRawInput = ""
+    }
+
+    /// iOS 会在扩展挂起时终止仍持有数据库文件锁的进程。
+    /// 因此这里必须同步 finalize，不能依赖不保证及时执行的 deinit。
+    public func suspendForVisibilityChange() {
+        guard !isSuspendedForVisibilityChange else { return }
+        bridge.finalize()
+        isSuspendedForVisibilityChange = true
+    }
+
+    public func resumeAfterVisibilityChange() {
+        guard isSuspendedForVisibilityChange else { return }
+        guard bridge.initializeEngine(), bridge.createSession() else {
+            Logger.shared.error(
+                "RIME runtime could not resume after keyboard visibility change",
+                category: .engine
+            )
+            // Keep suspended for a later retry, but never leave stale T9 chrome/semantics.
+            publishFailClosedSelection(reason: "resume-init-or-session-failed")
+            return
+        }
+
+        let requested = resolveRuntimeSelection()
+        let fallback = requested.baseSchemaID == "rime_ice" ? "rime_ice" : "luna_pinyin"
+        let selected = selectSchemaForStartup(requested.effectiveSchemaID, fallback: fallback)
+        guard let selected else {
+            bridge.finalize()
+            Logger.shared.error(
+                "RIME schema could not be restored after keyboard visibility change",
+                category: .engine
+            )
+            publishFailClosedSelection(reason: "resume-schema-selection-failed")
+            return
+        }
+
+        applyRealizedSelection(requested: requested, actualSchemaID: selected)
+        isSuspendedForVisibilityChange = false
+    }
+
+    /// 查询 RIME 是否有活跃的 composition（拼音正在输入中）。
+    public func isComposing() -> Bool {
+        bridge.isComposing()
+    }
+
+    /// 候选词翻页（上一页）。
+    /// 发送 XK_Page_Up (0xFF55) 按键码到 librime。
+    public func pageUp() -> KeyboardCore.RimeOutput {
+        pageCandidates(keycode: 0xFF55, diagnosticName: "PAGE_UP")
+    }
+
+    /// 候选词翻页（下一页）。
+    /// 发送 XK_Page_Down (0xFF56) 按键码到 librime。
+    public func pageDown() -> KeyboardCore.RimeOutput {
+        pageCandidates(keycode: 0xFF56, diagnosticName: "PAGE_DOWN")
+    }
+
+    /// 获取可用 schema 列表字符串。
+    public func availableSchemas() -> String {
+        bridge.availableSchemas()
+    }
+}

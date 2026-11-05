@@ -1,0 +1,614 @@
+import Foundation
+import KeyboardCore
+
+nonisolated enum DiagnosticsLogClearResult: Equatable, Sendable {
+    case cleared
+    case failed
+}
+
+nonisolated struct DiagnosticsLogDay: Identifiable, Equatable, Sendable {
+    let range: DiagnosticsJournalDateRange
+
+    var id: Date { range.start }
+}
+
+nonisolated enum DiagnosticsLogDayCatalog: Equatable, Sendable {
+    case available(generation: UInt64, days: [DiagnosticsLogDay])
+    case empty(generation: UInt64)
+    case unavailable
+}
+
+protocol DiagnosticsLogSource: Sendable {
+    func loadLogText() async -> String?
+    func clearLog() async -> DiagnosticsLogClearResult
+}
+
+/// 只有 v1 journal 支持连续分页；legacy 文本只作为过渡期只读回退，因此不会
+/// 被悄悄全量迁移或重新持久化。
+protocol DiagnosticsLogPagingSource: DiagnosticsLogSource {
+    func loadMoreLogText() async -> String?
+    func hasMoreLogPages() async -> Bool
+    func pagingNotice() async -> String?
+    func isPartialLogWindow() async -> Bool
+}
+
+protocol DiagnosticsDatedLogSource: DiagnosticsLogPagingSource {
+    func availableLogDayCatalog() async -> DiagnosticsLogDayCatalog
+    func selectLogDay(_ day: DiagnosticsLogDay?) async
+}
+
+/// Optional cheap identity for the 1s live follower. Store skips a full
+/// JSONL root load when this token is unchanged.
+protocol DiagnosticsLiveRefreshIdentifying: DiagnosticsLogSource {
+    func liveRefreshIdentity() async -> String?
+}
+
+struct SharedDefaultsDiagnosticsLogSource: DiagnosticsLogSource {
+    let appGroupID: String
+
+    func loadLogText() async -> String? {
+        let defaults = UserDefaults(suiteName: appGroupID)
+        guard let log = defaults?.string(forKey: "rime_diag_log"), !log.isEmpty else { return nil }
+        // 统一让诊断页以“最新优先”展示，避免 legacy 与 v1 的视觉顺序不同。
+        return
+            log
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .reversed()
+            .joined(separator: "\n")
+    }
+
+    func clearLog() async -> DiagnosticsLogClearResult {
+        guard let defaults = UserDefaults(suiteName: appGroupID) else { return .failed }
+        defaults.removeObject(forKey: "rime_diag_log")
+        defaults.removeObject(forKey: "rime_diag_summary")
+        defaults.synchronize()
+        guard
+            defaults.object(forKey: "rime_diag_log") == nil,
+            defaults.object(forKey: "rime_diag_summary") == nil
+        else {
+            return .failed
+        }
+        return .cleared
+    }
+}
+
+/// 迁移期间优先展示 v1 journal；尚未迁移的旧自由文本日志仅作为只读回退，
+/// 绝不重新编码或写入 v1。
+actor CompositeDiagnosticsLogSource: DiagnosticsDatedLogSource, DiagnosticsLiveRefreshIdentifying {
+    private enum ActiveSource {
+        case v1
+        case legacy
+    }
+
+    let appGroupID: String
+    private let v1Source: V1DiagnosticsLogSource
+    private var activeSource: ActiveSource?
+    private var queryRevision: UInt64 = 0
+
+    init(
+        appGroupID: String,
+        rootURLProvider: (@Sendable () -> URL?)? = nil
+    ) {
+        self.appGroupID = appGroupID
+        v1Source = V1DiagnosticsLogSource(
+            appGroupID: appGroupID,
+            rootURLProvider: rootURLProvider
+        )
+    }
+
+    func loadLogText() async -> String? {
+        let revision = advanceQueryRevision()
+        let journalText = await v1Source.loadLogText()
+        guard revision == queryRevision else { return nil }
+        let usedV1Result = await v1Source.didUseV1Result()
+        guard revision == queryRevision else { return nil }
+        if journalText != nil || usedV1Result {
+            activeSource = .v1
+            return journalText
+        }
+        activeSource = .legacy
+        return await SharedDefaultsDiagnosticsLogSource(appGroupID: appGroupID).loadLogText()
+    }
+
+    func loadMoreLogText() async -> String? {
+        guard case .v1? = activeSource else { return nil }
+        let revision = queryRevision
+        let text = await v1Source.loadMoreLogText()
+        guard revision == queryRevision else { return nil }
+        return text
+    }
+
+    func hasMoreLogPages() async -> Bool {
+        guard case .v1? = activeSource else { return false }
+        return await v1Source.hasMoreLogPages()
+    }
+
+    func pagingNotice() async -> String? {
+        guard case .v1? = activeSource else { return nil }
+        return await v1Source.pagingNotice()
+    }
+
+    func isPartialLogWindow() async -> Bool {
+        guard case .v1? = activeSource else { return false }
+        return await v1Source.isPartialLogWindow()
+    }
+
+    func availableLogDayCatalog() async -> DiagnosticsLogDayCatalog {
+        await v1Source.availableLogDayCatalog()
+    }
+
+    func liveRefreshIdentity() async -> String? {
+        await v1Source.liveRefreshIdentity()
+    }
+
+    func selectLogDay(_ day: DiagnosticsLogDay?) async {
+        _ = advanceQueryRevision()
+        await v1Source.selectLogDay(day)
+    }
+
+    func clearLog() async -> DiagnosticsLogClearResult {
+        let revision = advanceQueryRevision()
+        let v1Result = await v1Source.clearLog()
+        let legacyResult = await SharedDefaultsDiagnosticsLogSource(appGroupID: appGroupID).clearLog()
+        guard revision == queryRevision else { return .failed }
+        guard v1Result == .cleared, legacyResult == .cleared else { return .failed }
+        activeSource = nil
+        return .cleared
+    }
+
+    @discardableResult
+    private func advanceQueryRevision() -> UInt64 {
+        queryRevision = queryRevision == UInt64.max ? 1 : queryRevision + 1
+        return queryRevision
+    }
+}
+
+/// Main-App-only repository adapter. File enumeration and JSONL parsing stay in
+/// `DiagnosticsJournalReader`; this type only obtains the App Group root and
+/// formats already allowlisted events for the presentation layer.
+actor V1DiagnosticsLogSource: DiagnosticsDatedLogSource, DiagnosticsLiveRefreshIdentifying {
+    let appGroupID: String
+    private let rootURLProvider: @Sendable () -> URL?
+    private var reader: DiagnosticsJournalReader?
+    private var readerRootURL: URL?
+    private var nextCursor: DiagnosticsJournalPageCursor?
+    private var lastPageStatus: DiagnosticsJournalPageStatus = .completed
+    /// Record rejections describe the whole query and survive page continuation.
+    private var queryCompleteness: DiagnosticsJournalCompleteness = .complete
+    private var usedV1Result = false
+    private var selectedLogDay: DiagnosticsLogDay?
+    private var queryRevision: UInt64 = 0
+
+    init(
+        appGroupID: String,
+        rootURLProvider: (@Sendable () -> URL?)? = nil
+    ) {
+        self.appGroupID = appGroupID
+        if let rootURLProvider {
+            self.rootURLProvider = rootURLProvider
+        } else {
+            self.rootURLProvider = {
+                FileManager.default
+                    .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+                    .appendingPathComponent("Diagnostics/v1", isDirectory: true)
+            }
+        }
+    }
+
+    func loadLogText() async -> String? {
+        let revision = advanceQueryRevision()
+        let requestedDay = selectedLogDay
+        queryCompleteness = .complete
+        usedV1Result = false
+        guard let rootURL = journalRootURL() else {
+            reader = nil
+            readerRootURL = nil
+            nextCursor = nil
+            lastPageStatus = .journalUnavailable
+            // App Group 不可用不是“v1 正常为空”。保持在 v1 视图可避免将
+            // 无法验证来源的 legacy 自由文本悄悄混入当前诊断结果。
+            usedV1Result = true
+            return nil
+        }
+        // Retention 由 Main App lifecycle 统一投递。Reader 使用非阻塞独占
+        // snapshot fence；若在这里先启动 reclaim，会让本次读取与自己竞争并
+        // 偶发降级为 journalUnavailable。
+        let reader = retainedReader(rootURL: rootURL)
+        let page: DiagnosticsJournalPage
+        var observedCompleteness = DiagnosticsJournalCompleteness.complete
+        do {
+            let strictPage = try await reader.beginPage(in: requestedDay?.range)
+            guard revision == queryRevision, requestedDay == selectedLogDay else { return nil }
+            observedCompleteness = strictPage.completeness
+            switch strictPage.status {
+            case .snapshotExceedsReadBudget, .snapshotExceedsEventBudget:
+                if let requestedDay {
+                    page = try await reader.recentPreview(in: requestedDay.range)
+                    guard revision == queryRevision, requestedDay == self.selectedLogDay else { return nil }
+                    observedCompleteness = Self.merging(
+                        observedCompleteness,
+                        page.completeness
+                    )
+                } else {
+                    page = strictPage
+                }
+            default:
+                page = strictPage
+            }
+        } catch {
+            guard revision == queryRevision, requestedDay == selectedLogDay else { return nil }
+            self.reader = nil
+            readerRootURL = nil
+            nextCursor = nil
+            lastPageStatus = .journalUnavailable
+            queryCompleteness = observedCompleteness
+            usedV1Result = true
+            return nil
+        }
+        queryCompleteness = Self.merging(observedCompleteness, page.completeness)
+        lastPageStatus = page.status
+        // 只有完整且成功的空 journal 才可回退到 legacy；拒绝记录也使结果不完整。
+        guard revision == queryRevision, requestedDay == selectedLogDay else { return nil }
+        usedV1Result =
+            requestedDay != nil || !page.events.isEmpty
+            || page.status != .completed || !queryCompleteness.isComplete
+        guard !page.events.isEmpty else {
+            nextCursor = nil
+            return nil
+        }
+        nextCursor = page.nextCursor
+        return formattedText(for: page.events)
+    }
+
+    func loadMoreLogText() async -> String? {
+        guard let reader, let nextCursor else {
+            self.nextCursor = nil
+            return nil
+        }
+        let revision = queryRevision
+        let page: DiagnosticsJournalPage
+        do {
+            page = try await reader.nextPage(after: nextCursor)
+        } catch {
+            guard revision == queryRevision else { return nil }
+            self.nextCursor = nil
+            lastPageStatus = .journalUnavailable
+            usedV1Result = true
+            return nil
+        }
+        guard revision == queryRevision else { return nil }
+        queryCompleteness = Self.merging(queryCompleteness, page.completeness)
+        lastPageStatus = page.status
+        self.nextCursor = page.nextCursor
+        if !queryCompleteness.isComplete {
+            usedV1Result = true
+        }
+        guard !page.events.isEmpty else { return nil }
+        return formattedText(for: page.events)
+    }
+
+    func hasMoreLogPages() -> Bool {
+        nextCursor != nil
+    }
+
+    func liveRefreshIdentity() async -> String? {
+        guard let rootURL = journalRootURL() else { return nil }
+        let reader = retainedReader(rootURL: rootURL)
+        do {
+            let identity = try await reader.liveRefreshIdentity()
+            return
+                "\(identity.generation):\(identity.segmentCount):\(identity.totalByteWatermark)"
+        } catch {
+            return nil
+        }
+    }
+
+    func availableLogDayCatalog() async -> DiagnosticsLogDayCatalog {
+        guard let rootURL = journalRootURL() else { return .unavailable }
+        let reader = retainedReader(rootURL: rootURL)
+        do {
+            let catalog = try await reader.availableDateCatalog()
+            let days = catalog.ranges.map(DiagnosticsLogDay.init(range:))
+            guard !days.isEmpty else { return .empty(generation: catalog.generation) }
+            return .available(generation: catalog.generation, days: days)
+        } catch {
+            return .unavailable
+        }
+    }
+
+    func selectLogDay(_ day: DiagnosticsLogDay?) {
+        guard selectedLogDay != day else { return }
+        _ = advanceQueryRevision()
+        selectedLogDay = day
+        nextCursor = nil
+        lastPageStatus = .completed
+        queryCompleteness = .complete
+    }
+
+    func pagingNotice() -> String? {
+        let statusNotice: String? =
+            switch lastPageStatus {
+            case .hasMore, .completed:
+                nil
+            case .invalidatedByGeneration:
+                "日志已清空，请刷新后查看当前记录。"
+            case .invalidatedByReclaim:
+                "日志已被自动回收，请刷新后继续查看。"
+            case .cursorUnavailable:
+                "日志分页已失效，请刷新后继续查看。"
+            case .snapshotExceedsReadBudget:
+                "当前日志快照过大，无法在安全读取上限内严格排序；请使用右上角垃圾桶清空后重新记录。"
+            case .snapshotExceedsEventBudget:
+                "当前日志快照超过安全事件上限；请使用右上角垃圾桶清空后重新记录。"
+            case .partialRecentWindow:
+                "当前日期的完整日志超过安全读取上限，下面仅展示有界最近窗口；较早记录仍保留在设备上。"
+            case .snapshotUnavailable:
+                "日志正在轮转或回收，请刷新后查看当前记录。"
+            case .journalUnavailable:
+                "诊断日志暂时不可用；旧日志不会在此状态下自动混入当前视图。"
+            }
+        guard !queryCompleteness.isComplete else { return statusNotice }
+        let incompleteNotice = "部分诊断记录无法读取；当前显示可能不完整。"
+        guard let statusNotice else { return incompleteNotice }
+        return "\(incompleteNotice) \(statusNotice)"
+    }
+
+    func isPartialLogWindow() -> Bool {
+        lastPageStatus == .partialRecentWindow
+    }
+
+    func didUseV1Result() -> Bool {
+        usedV1Result
+    }
+
+    func clearLog() async -> DiagnosticsLogClearResult {
+        _ = advanceQueryRevision()
+        guard let rootURL = journalRootURL() else { return .failed }
+        let writer = DiagnosticsJournalWriter(
+            rootURL: rootURL,
+            origin: .mainApp,
+            isMainAppWriter: true,
+            writerVersion: .v6
+        )
+        do {
+            try await writer.prepareRootIfOwnedByMainApp()
+            _ = try await writer.advanceGenerationForClear()
+        } catch {
+            return .failed
+        }
+        _ = advanceQueryRevision()
+        reader = nil
+        readerRootURL = nil
+        nextCursor = nil
+        lastPageStatus = .completed
+        queryCompleteness = .complete
+        usedV1Result = false
+        selectedLogDay = nil
+        return .cleared
+    }
+
+    @discardableResult
+    private func advanceQueryRevision() -> UInt64 {
+        queryRevision = queryRevision == UInt64.max ? 1 : queryRevision + 1
+        return queryRevision
+    }
+
+    private func journalRootURL() -> URL? {
+        rootURLProvider()
+    }
+
+    private func retainedReader(rootURL: URL) -> DiagnosticsJournalReader {
+        if let reader, readerRootURL == rootURL {
+            return reader
+        }
+        let reader = DiagnosticsJournalReader(rootURL: rootURL)
+        self.reader = reader
+        readerRootURL = rootURL
+        return reader
+    }
+
+    private func formattedText(for events: [DiagnosticEvent]) -> String {
+        events.map(DiagnosticsEventDisplayFormatter.line).joined(separator: "\n")
+    }
+
+    /// Completeness is a Sendable value; combining it does not access actor state.
+    private nonisolated static func merging(
+        _ lhs: DiagnosticsJournalCompleteness,
+        _ rhs: DiagnosticsJournalCompleteness
+    ) -> DiagnosticsJournalCompleteness {
+        let reasons = lhs.rejectionReasons.union(rhs.rejectionReasons)
+        return reasons.isEmpty ? .complete : .incomplete(reasons: reasons)
+    }
+}
+
+enum DiagnosticsEventDisplayFormatter {
+    nonisolated static func line(_ event: DiagnosticEvent) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timestamp = formatter.string(from: event.utcTimestamp)
+        let fields = event.fields.map(fieldDescription).joined(separator: " ")
+        let action = event.actionSequence.map { "action=\($0)" }
+        let delivery = event.schemeDeliveryPayload.map(schemeDeliveryDescription)
+        let rimeSync = event.rimeSyncPayload.map(rimeSyncDescription)
+        let runtimeRoute = event.runtimeRoutePayload.map(runtimeRouteDescription)
+        let keyboardLifecycle = event.keyboardLifecyclePayload.map(keyboardLifecycleDescription)
+        let rimeResume = event.rimeResumePayload.map(rimeResumeDescription)
+        let textProxy = event.textProxyPayload.map(textProxyDescription)
+        let details =
+            ([action, delivery, rimeSync, runtimeRoute, keyboardLifecycle, rimeResume, textProxy]
+            .compactMap { $0 }
+            + (fields.isEmpty ? [] : [fields]))
+            .joined(separator: " ")
+        let suffix = details.isEmpty ? "" : " \(details)"
+        return "[\(timestamp)] [\(event.level.rawValue)] [\(event.category.rawValue)] \(event.code.rawValue)\(suffix)"
+    }
+
+    private nonisolated static func fieldDescription(_ field: DiagnosticEvent.Field) -> String {
+        switch field {
+        case let .count(name, value):
+            if name == .candidateTouchBand,
+                let band = DiagnosticEvent.CandidateTouchBand(rawValue: value)
+            {
+                return "\(name.rawValue)=\(band)"
+            }
+            return "\(name.rawValue)=\(value)"
+        case let .duration(name, value):
+            return "\(name.rawValue)=\(value)"
+        case let .flag(name, value):
+            return "\(name.rawValue)=\(value)"
+        case let .reason(reason):
+            return "reason=\(reason.rawValue)"
+        case let .typoRecallQuery(payload):
+            // Keep the display within the payload's closed, content-free schema.
+            return "query_operation_ordinal=\(payload.operationOrdinal)"
+                + " query_stage=\(payload.stage.rawValue)"
+                + " query_readiness=\(payload.readiness.rawValue)"
+                + " query_result_state=\(payload.resultState.rawValue)"
+                + " query_returned_bucket=\(payload.returnedCandidateBucket.rawValue)"
+                + " query_disposition=\(payload.disposition.rawValue)"
+                + " query_facade_us=\(payload.facadeElapsedMicroseconds)"
+                + " query_duration_state=\(payload.durationState.rawValue)"
+        }
+    }
+
+    private nonisolated static func schemeDeliveryDescription(
+        _ payload: DiagnosticEvent.SchemeDeliveryPayload
+    ) -> String {
+        switch payload {
+        case .phaseChanged(let event):
+            return deliveryPrefix(event.context)
+                + " phase=\(event.phase.rawValue) result=\(event.result.rawValue)"
+                + deliveryAttemptSourceHost(event.attempt, event.source, event.host)
+                + (event.probeFailure.map { " probe_failure=\($0.rawValue)" } ?? "")
+        case .integrityFailed(let event):
+            let observation: String
+            switch event.observation {
+            case .archiveSize(let expected, let actual):
+                observation = "integrity=archive_size expected=\(expected) actual=\(actual)"
+            case .archiveDigest(let expected, let actual):
+                observation =
+                    "integrity=archive_digest expected=\(expected.value) actual=\(actual.value)"
+            case .stagedContent(let expected, let actual):
+                observation =
+                    "integrity=staged_content expected=\(expected.value) actual=\(actual.value)"
+            }
+            return deliveryPrefix(event.context) + " phase=\(event.phase.rawValue) \(observation)"
+                + deliveryAttemptSourceHost(event.attempt, event.source, event.host)
+        case .fallback(let event):
+            return deliveryPrefix(event.context)
+                + " from_attempt=\(event.fromAttempt.value) from=\(event.from.rawValue)"
+                + " to_attempt=\(event.toAttempt.value) to=\(event.to.rawValue)"
+                + " reason=\(event.reason.rawValue)"
+        case .terminal(let event):
+            return deliveryPrefix(event.context) + " result=\(event.result.rawValue)"
+                + " installed=\(event.installed) deployed=\(event.deployed)"
+                + (event.failure.map { " failure=\($0.rawValue)" } ?? "")
+        }
+    }
+
+    /// Finite runtime-route keys only. Used by the list/copy surface and the
+    /// tap-detail sheet so SUG-07 can read UUID, phase, and elapsed without
+    /// opening a raw journal file.
+    nonisolated static func runtimeRouteDetailItems(
+        from line: String
+    ) -> [(title: String, value: String)]? {
+        guard line.contains(DiagnosticEvent.Code.runtimeRoutePhaseChanged.rawValue) else {
+            return nil
+        }
+        let allowed = [
+            "operation", "phase", "result", "schema", "layout", "state", "elapsed_ms",
+        ]
+        var values: [String: String] = [:]
+        for token in line.split(whereSeparator: { $0.isWhitespace }) {
+            let parts = token.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let key = String(parts[0])
+            guard allowed.contains(key), values[key] == nil else { continue }
+            values[key] = String(parts[1])
+        }
+        let items = allowed.compactMap { key in
+            values[key].map { (title: key, value: $0) }
+        }
+        return items.isEmpty ? nil : items
+    }
+
+    private nonisolated static func runtimeRouteDescription(
+        _ payload: DiagnosticEvent.RuntimeRoutePhaseEvent
+    ) -> String {
+        "operation=\(payload.operationID.uuidString.lowercased())"
+            + " phase=\(payload.phase.rawValue)"
+            + " result=\(payload.result.rawValue)"
+            + " schema=\(payload.schema.rawValue)"
+            + " layout=\(payload.layout.rawValue)"
+            + " state=\(payload.state.rawValue)"
+            + " elapsed_ms=\(payload.elapsedMilliseconds)"
+    }
+
+    private nonisolated static func rimeSyncDescription(
+        _ payload: DiagnosticEvent.RimeSyncPayload
+    ) -> String {
+        switch payload {
+        case .invoked(let event):
+            let phases = event.requestedPhases.map(\.rawValue).joined(separator: ",")
+            return rimeSyncPrefix(event.context) + " phases=\(phases)"
+        case .phaseChanged(let event):
+            return rimeSyncPrefix(event.context)
+                + " phase=\(event.phase.rawValue) result=\(event.result.rawValue)"
+        case .skipped(let event):
+            return rimeSyncPrefix(event.context) + " reason=\(event.reason.rawValue)"
+        case .terminal(let event):
+            let phase = event.phase.map { " phase=\($0.rawValue)" } ?? ""
+            let failure = event.failure.map { " failure=\($0.rawValue)" } ?? ""
+            return rimeSyncPrefix(event.context)
+                + " result=\(event.result.rawValue)\(phase)\(failure)"
+        }
+    }
+
+    private nonisolated static func rimeSyncPrefix(
+        _ context: DiagnosticEvent.RimeSyncContext
+    ) -> String {
+        "operation=\(context.operationID.uuidString.lowercased()) source=\(context.source.rawValue)"
+    }
+
+    private nonisolated static func keyboardLifecycleDescription(
+        _ payload: DiagnosticEvent.KeyboardLifecyclePayload
+    ) -> String {
+        "phase=\(payload.phase.rawValue)"
+    }
+
+    private nonisolated static func rimeResumeDescription(
+        _ payload: DiagnosticEvent.RimeResumePayload
+    ) -> String {
+        let failure = payload.failure.map { " failure=\($0.rawValue)" } ?? ""
+        let sessionEpoch = payload.sessionEpoch.map { " session_epoch=\($0)" } ?? ""
+        let revision = payload.revision.map { " revision=\($0)" } ?? ""
+        return "phase=\(payload.phase.rawValue)\(failure)\(sessionEpoch)\(revision)"
+    }
+
+    private nonisolated static func textProxyDescription(
+        _ payload: DiagnosticEvent.TextProxyPayload
+    ) -> String {
+        "operation=\(payload.operation.rawValue) phase=\(payload.phase.rawValue)"
+    }
+
+    private nonisolated static func deliveryPrefix(
+        _ context: DiagnosticEvent.SchemeDeliveryContext
+    ) -> String {
+        "operation=\(context.operationID.uuidString.lowercased())"
+            + " artifact=\(context.artifact.rawValue)"
+            + " staged=\(context.stagedIdentity.rawValue)"
+    }
+
+    private nonisolated static func deliveryAttemptSourceHost(
+        _ attempt: DiagnosticEvent.SchemeDeliveryAttempt?,
+        _ source: DiagnosticEvent.SchemeSource?,
+        _ host: DiagnosticEvent.SchemeHost?
+    ) -> String {
+        let values = [
+            attempt.map { "attempt=\($0.value)" },
+            source.map { "source=\($0.rawValue)" },
+            host.map { "host=\($0.rawValue)" },
+        ].compactMap { $0 }
+        return values.isEmpty ? "" : " " + values.joined(separator: " ")
+    }
+}

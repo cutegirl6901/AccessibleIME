@@ -1,0 +1,306 @@
+import Foundation
+import KeyboardCore
+import RimeBridgeObjC
+
+/// Content-free post-deployment proof that the requested schema can actually type.
+public enum RimeSchemaRuntimeSmokeProbe {
+    public struct Result: Equatable, Sendable {
+        public let selectedRequestedSchema: Bool
+        public let compositionPresent: Bool
+        public let rawInputMatched: Bool
+        public let candidateCount: Int
+        public let hasHanCandidate: Bool
+        public let unexpectedCommit: Bool
+        public let builtinQualityPassed: Bool?
+
+        public init(
+            selectedRequestedSchema: Bool,
+            compositionPresent: Bool,
+            rawInputMatched: Bool,
+            candidateCount: Int,
+            hasHanCandidate: Bool,
+            unexpectedCommit: Bool,
+            builtinQualityPassed: Bool? = nil
+        ) {
+            self.selectedRequestedSchema = selectedRequestedSchema
+            self.compositionPresent = compositionPresent
+            self.rawInputMatched = rawInputMatched
+            self.candidateCount = candidateCount
+            self.hasHanCandidate = hasHanCandidate
+            self.unexpectedCommit = unexpectedCommit
+            self.builtinQualityPassed = builtinQualityPassed
+        }
+
+        public var passed: Bool {
+            selectedRequestedSchema && compositionPresent && rawInputMatched && candidateCount > 0
+                && hasHanCandidate && !unexpectedCommit && builtinQualityPassed != false
+        }
+    }
+
+    public static func run(
+        sharedDataDir: String,
+        userDataDir: String,
+        schemaID: String
+    ) -> Result {
+        if schemaID == "luna_pinyin" {
+            do {
+                try RimeBuiltinResourceInstaller().validateInstalledRuntime(
+                    rimeRoot: URL(fileURLWithPath: sharedDataDir).deletingLastPathComponent(),
+                    userDataURL: URL(fileURLWithPath: userDataDir)
+                )
+            } catch {
+                // Luna must never fall back to the generic "some Han candidate"
+                // smoke when its exact resource/overlay identity is unproven.
+                return failedBuiltinResult
+            }
+        }
+        let bridge = RimeSessionManager()
+        guard bridge.setup(withSharedDataDir: sharedDataDir, userDataDir: userDataDir) else {
+            return failedResult
+        }
+        guard bridge.initializeEngine() else {
+            bridge.finalize()
+            return failedResult
+        }
+        defer { bridge.finalize() }
+        guard bridge.createSession() else { return failedResult }
+
+        let selected = bridge.selectSchema(schemaID) && bridge.currentSchemaID() == schemaID
+        guard selected else { return failedResult }
+
+        bridge.clearComposition()
+        var outputs: [RimeOutput] = []
+        for character in "ni" {
+            outputs.append(
+                RimeEngineImpl.parseOutputDictionary(
+                    bridge.processKey(RimeEngineImpl.keycode(for: String(character)), modifiers: 0)
+                )
+            )
+        }
+        let window = RimeEngineImpl.parseCandidateWindowDictionary(
+            bridge.candidates(from: 0, limit: 20)
+        )
+        var result = evaluate(outputs: outputs, window: window, selectedRequestedSchema: true)
+        if schemaID == "luna_pinyin" {
+            let lunaOverlay = try? String(
+                contentsOf: URL(fileURLWithPath: userDataDir)
+                    .appendingPathComponent("luna_pinyin.custom.yaml"),
+                encoding: .utf8
+            )
+            result = Result(
+                selectedRequestedSchema: result.selectedRequestedSchema,
+                compositionPresent: result.compositionPresent,
+                rawInputMatched: result.rawInputMatched,
+                candidateCount: result.candidateCount,
+                hasHanCandidate: result.hasHanCandidate,
+                unexpectedCommit: result.unexpectedCommit,
+                builtinQualityPassed: evaluateBuiltinLunaQuality(
+                    using: bridge,
+                    requiresNLFuzzyDiscovery: lunaOverlay?.contains("derive/^n/l/") == true
+                        && lunaOverlay?.contains("derive/^l/n/") == true
+                )
+            )
+        }
+        bridge.clearComposition()
+        return result
+    }
+
+    static func evaluate(
+        outputs: [RimeOutput],
+        window: RimeCandidateWindow,
+        selectedRequestedSchema: Bool
+    ) -> Result {
+        let output = outputs.last ?? RimeOutput()
+        let candidates =
+            output.candidates.count >= window.candidates.count
+            ? output.candidates
+            : window.candidates
+        return Result(
+            selectedRequestedSchema: selectedRequestedSchema,
+            compositionPresent: !(output.composition?.preeditText.isEmpty ?? true)
+                || !(output.rawInput?.isEmpty ?? true),
+            rawInputMatched: output.rawInput == "ni",
+            candidateCount: candidates.count,
+            hasHanCandidate: candidates.contains { containsHanScalar($0.text) },
+            // Any host commit during the synthetic sequence makes the smoke unsafe.
+            unexpectedCommit: outputs.contains { !($0.committedText?.isEmpty ?? true) },
+            builtinQualityPassed: nil
+        )
+    }
+
+    private static func evaluateBuiltinLunaQuality(
+        using bridge: RimeSessionManager,
+        requiresNLFuzzyDiscovery: Bool
+    ) -> Bool {
+        let expectedNiPage = requiresNLFuzzyDiscovery ? ["你", "里", "李", "离"] : ["你", "拟", "尼", "泥"]
+        let expectedNihaoPage =
+            requiresNLFuzzyDiscovery
+            ? ["你好", "妳好", "利好", "立好"] : ["你好", "妳好", "逆号", "拟好"]
+        let expectedSanjiaoxingPage =
+            requiresNLFuzzyDiscovery
+            ? ["三角形", "三角", "山脚", "三教"] : ["三角形", "三角", "三教", "三焦"]
+        let cases: [(input: String, expectedTopCandidate: String, expectedFirstPage: [String]?)] = [
+            (input: "ni", expectedTopCandidate: "你", expectedFirstPage: expectedNiPage),
+            (input: "nihao", expectedTopCandidate: "你好", expectedFirstPage: expectedNihaoPage),
+            (
+                input: "sanjiaoxing", expectedTopCandidate: "三角形",
+                expectedFirstPage: expectedSanjiaoxingPage
+            ),
+            (
+                input: "jintiantianqihenhao", expectedTopCandidate: "今天天气很好",
+                expectedFirstPage: ["今天天气很好", "今天天气", "今天", "金田"]
+            ),
+            // Exercises Essay ranking plus the bundled t2s OpenCC profile.
+            (
+                input: "fanti", expectedTopCandidate: "繁体",
+                expectedFirstPage: ["繁体", "反踢", "反提", "饭"]
+            ),
+            // Exercises the Luna schema's bundled Stroke reverse lookup.
+            (input: "`pspzzpn", expectedTopCandidate: "你", expectedFirstPage: ["你", "您"]),
+        ]
+        for testCase in cases {
+            bridge.clearComposition()
+            var hadUnexpectedCommit = false
+            for character in testCase.input {
+                let output = RimeEngineImpl.parseOutputDictionary(
+                    bridge.processKey(RimeEngineImpl.keycode(for: String(character)), modifiers: 0)
+                )
+                hadUnexpectedCommit = hadUnexpectedCommit || !(output.committedText?.isEmpty ?? true)
+            }
+            let window = RimeEngineImpl.parseCandidateWindowDictionary(
+                bridge.candidates(from: 0, limit: 5)
+            )
+            let candidateTexts = window.candidates.map(\.text)
+            guard
+                !hadUnexpectedCommit,
+                candidateTexts.first == testCase.expectedTopCandidate,
+                testCase.expectedFirstPage == nil || candidateTexts == testCase.expectedFirstPage
+            else {
+                return false
+            }
+        }
+        // Reverse lookup must not leak into the ordinary pinyin session after
+        // composition is cleared.
+        bridge.clearComposition()
+        for character in "ni" {
+            _ = bridge.processKey(RimeEngineImpl.keycode(for: String(character)), modifiers: 0)
+        }
+        let pinyinAfterStroke = RimeEngineImpl.parseCandidateWindowDictionary(
+            bridge.candidates(from: 0, limit: 5)
+        )
+        guard pinyinAfterStroke.candidates.map(\.text) == expectedNiPage else { return false }
+        if requiresNLFuzzyDiscovery {
+            bridge.clearComposition()
+            for character in "li" {
+                _ = bridge.processKey(RimeEngineImpl.keycode(for: String(character)), modifiers: 0)
+            }
+            let fuzzyWindow = RimeEngineImpl.parseCandidateWindowDictionary(
+                bridge.candidates(from: 0, limit: 20)
+            )
+            guard fuzzyWindow.candidates.contains(where: { $0.text == "你" }) else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static let failedResult = Result(
+        selectedRequestedSchema: false,
+        compositionPresent: false,
+        rawInputMatched: false,
+        candidateCount: 0,
+        hasHanCandidate: false,
+        unexpectedCommit: false,
+        builtinQualityPassed: nil
+    )
+
+    private static let failedBuiltinResult = Result(
+        selectedRequestedSchema: false,
+        compositionPresent: false,
+        rawInputMatched: false,
+        candidateCount: 0,
+        hasHanCandidate: false,
+        unexpectedCommit: false,
+        builtinQualityPassed: false
+    )
+
+    static func containsHanScalar(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            switch scalar.value {
+            case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF,
+                0x20000...0x2FA1F, 0x30000...0x323AF:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
+enum RimeSchemaDeploymentInputValidator {
+    static func isReady(sharedDataURL: URL, userDataURL: URL, schemaID: String) -> Bool {
+        guard isCanonicalSchemaID(schemaID) else { return false }
+        let schemaURL = sharedDataURL.appendingPathComponent("\(schemaID).schema.yaml")
+        let customURL = userDataURL.appendingPathComponent("default.custom.yaml")
+        guard isNonEmptyRegularFile(schemaURL), isNonEmptyRegularFile(customURL) else { return false }
+        guard let customYaml = try? String(contentsOf: customURL, encoding: .utf8) else { return false }
+        return schemaList(in: customYaml).contains(schemaID)
+    }
+
+    private static func isNonEmptyRegularFile(_ url: URL) -> Bool {
+        guard
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+            values.isRegularFile == true,
+            let size = values.fileSize
+        else { return false }
+        return size > 0
+    }
+
+    private static func isCanonicalSchemaID(_ schemaID: String) -> Bool {
+        !schemaID.isEmpty
+            && schemaID.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil
+    }
+
+    /// Reads only `patch/schema_list`; matching an unrelated YAML key must not authorize deployment.
+    private static func schemaList(in yaml: String) -> Set<String> {
+        var patchIndent: Int?
+        var listIndent: Int?
+        var result = Set<String>()
+        for rawLine in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+            let indent = line.prefix { $0 == " " }.count
+
+            if trimmed == "patch:" {
+                patchIndent = indent
+                listIndent = nil
+                continue
+            }
+            if let currentPatchIndent = patchIndent, indent <= currentPatchIndent {
+                reset(&patchIndent, &listIndent)
+                continue
+            }
+            if patchIndent != nil, trimmed == "schema_list:" {
+                listIndent = indent
+                continue
+            }
+            if let currentListIndent = listIndent {
+                guard indent > currentListIndent else {
+                    reset(&patchIndent, &listIndent)
+                    continue
+                }
+                let prefix = "- schema:"
+                guard trimmed.hasPrefix(prefix) else { continue }
+                let value = trimmed.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+                if isCanonicalSchemaID(value) { result.insert(value) }
+            }
+        }
+        return result
+    }
+
+    private static func reset(_ patchIndent: inout Int?, _ listIndent: inout Int?) {
+        patchIndent = nil
+        listIndent = nil
+    }
+}

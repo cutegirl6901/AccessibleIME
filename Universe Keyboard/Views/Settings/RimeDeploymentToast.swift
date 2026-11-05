@@ -1,0 +1,257 @@
+import SwiftUI
+
+struct AppOperationToastState: Equatable {
+    enum Source: Equatable {
+        case deployment
+        case download
+        case userDictionary
+        case sync
+        case layout
+    }
+
+    enum Tone: Equatable {
+        case progress
+        case success
+        case failure
+        case info
+    }
+
+    let source: Source
+    let message: String
+    let systemImage: String
+    let tone: Tone
+    let automaticallyDismisses: Bool
+
+    var showsProgress: Bool {
+        tone == .progress
+    }
+
+    var iconColor: Color {
+        switch tone {
+        case .success:
+            return .green
+        case .failure:
+            return .red
+        case .progress, .info:
+            return .primary
+        }
+    }
+}
+
+extension AppOperationToastState {
+    init?(deploymentState: RimeDeploymentState) {
+        switch deploymentState {
+        case .triggered, .deploying:
+            self.init(
+                source: .deployment,
+                message: "正在应用 RIME 设置…",
+                systemImage: "arrow.triangle.2.circlepath",
+                tone: .progress,
+                automaticallyDismisses: false
+            )
+        case .deployed:
+            self.init(
+                source: .deployment,
+                message: "RIME 设置已生效",
+                systemImage: "checkmark.circle.fill",
+                tone: .success,
+                automaticallyDismisses: true
+            )
+        case .failed:
+            self.init(
+                source: .deployment,
+                message: "RIME 部署失败，请进入 RIME 方案设置重试",
+                systemImage: "xmark.circle.fill",
+                tone: .failure,
+                automaticallyDismisses: false
+            )
+        case .idle, .needsDeploy:
+            return nil
+        }
+    }
+
+    init?(downloadState: DownloadState) {
+        switch downloadState {
+        case .fetchingReleaseInfo(let schemeName):
+            self.init(
+                source: .download,
+                message: "正在检查\(schemeName)更新…",
+                systemImage: "arrow.triangle.2.circlepath",
+                tone: .progress,
+                automaticallyDismisses: false
+            )
+        case .downloading(let schemeName, let sourceName, let progress):
+            let progressSuffix: String
+            if let progress {
+                progressSuffix = " \(Int((progress * 100).rounded()))%"
+            } else {
+                // Unknown total size: do not show a misleading 0%.
+                progressSuffix = "…"
+            }
+            self.init(
+                source: .download,
+                message: "正在通过 \(sourceName) 下载\(schemeName)\(progressSuffix)",
+                systemImage: "arrow.down.circle",
+                tone: .progress,
+                automaticallyDismisses: false
+            )
+        case .extracting(let schemeName):
+            self.init(
+                source: .download,
+                message: "正在解压\(schemeName)…",
+                systemImage: "archivebox",
+                tone: .progress,
+                automaticallyDismisses: false
+            )
+        case .postProcessing(let schemeName):
+            self.init(
+                source: .download,
+                message: "正在处理\(schemeName)配置…",
+                systemImage: "doc.text",
+                tone: .progress,
+                automaticallyDismisses: false
+            )
+        case .deploying(let schemeName):
+            self.init(
+                source: .download,
+                message: "正在部署\(schemeName)…",
+                systemImage: "arrow.triangle.2.circlepath",
+                tone: .progress,
+                automaticallyDismisses: false
+            )
+        case .completed(let schemeName):
+            self.init(
+                source: .download,
+                message: "\(schemeName)已下载并部署",
+                systemImage: "checkmark.circle.fill",
+                tone: .success,
+                automaticallyDismisses: true
+            )
+        case .failed(_, let schemeName, _):
+            self.init(
+                source: .download,
+                message: "\(schemeName)下载或部署失败",
+                systemImage: "xmark.circle.fill",
+                tone: .failure,
+                automaticallyDismisses: true
+            )
+        case .idle:
+            return nil
+        }
+    }
+
+    static func userDictionary(message: String, succeeded: Bool) -> AppOperationToastState {
+        AppOperationToastState(
+            source: .userDictionary,
+            message: message,
+            systemImage: succeeded ? "checkmark.circle.fill" : "exclamationmark.circle.fill",
+            tone: succeeded ? .success : .info,
+            automaticallyDismisses: true
+        )
+    }
+
+    static func layout(message: String, succeeded: Bool) -> AppOperationToastState {
+        AppOperationToastState(
+            source: .layout,
+            message: message,
+            systemImage: succeeded ? "checkmark.circle.fill" : "exclamationmark.circle.fill",
+            tone: succeeded ? .success : (message.contains("失败") ? .failure : .info),
+            automaticallyDismisses: true
+        )
+    }
+
+    init?(syncStatus: RimeSyncStatus) {
+        switch syncStatus {
+        case .syncing(let phase):
+            self.init(
+                source: .sync,
+                message: phase.progressMessage,
+                systemImage: "arrow.triangle.2.circlepath",
+                tone: .progress,
+                automaticallyDismisses: false
+            )
+        case .succeeded(_, let completion):
+            self.init(
+                source: .sync,
+                message: completion.message,
+                systemImage: "checkmark.circle.fill",
+                tone: .success,
+                automaticallyDismisses: true
+            )
+        case .failed(let message):
+            self.init(
+                source: .sync,
+                message: message,
+                systemImage: "exclamationmark.triangle.fill",
+                tone: .failure,
+                automaticallyDismisses: true
+            )
+        case .idle, .notConfigured:
+            return nil
+        }
+    }
+}
+
+struct AppOperationToast: View {
+    let state: AppOperationToastState
+
+    var body: some View {
+        toastContent
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .frame(maxWidth: 520)
+            .modifier(RimeDeploymentToastSurface())
+    }
+
+    private var toastContent: some View {
+        HStack(spacing: 11) {
+            if state.showsProgress {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.primary)
+            } else {
+                Image(systemName: state.systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(state.iconColor)
+                    .frame(width: 24, height: 24)
+            }
+
+            Text(state.message)
+                .font(.system(.subheadline, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.9)
+
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct RimeDeploymentToastSurface: ViewModifier {
+    private let cornerRadius: CGFloat = 24
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .glassEffect(
+                    .regular.tint(Color(.systemBackground).opacity(0.18)), in: .rect(cornerRadius: cornerRadius)
+                )
+                .overlay(stroke)
+                .shadow(color: .black.opacity(0.08), radius: 20, y: 8)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: shape)
+                .overlay(stroke)
+                .shadow(color: .black.opacity(0.10), radius: 18, y: 8)
+        }
+    }
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    }
+
+    private var stroke: some View {
+        shape
+            .stroke(.white.opacity(0.28), lineWidth: 0.7)
+    }
+}

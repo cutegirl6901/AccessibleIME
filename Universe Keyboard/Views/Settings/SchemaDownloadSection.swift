@@ -1,0 +1,46 @@
+import SwiftUI
+
+struct SchemaDownloadSection: View {
+    let store: RimeSettingsStore
+    let onShowLicense: () -> Void
+    let onUninstall: () -> Void
+
+    var body: some View {
+        if !store.isRimeIceInstalled {
+            Section {
+                RimeIceInfoContent()
+            } header: {
+                Text("可用方案")
+            }
+        }
+
+        if let failedSchemaID = store.downloadState.failedSchemaID,
+            let message = store.downloadState.failureMessage(for: "rime_ice"),
+            failedSchemaID == "rime_ice"
+        {
+            Section {
+                RimeDownloadErrorContent(
+                    message: message,
+                    onRetry: { store.startDownload(schemaID: failedSchemaID) }
+                )
+            } header: {
+                Text("下载失败")
+            }
+        }
+
+        if store.isRimeIceInstalled {
+            Section {
+                SchemaManageContent(
+                    version: store.rimeIceVersion,
+                    updateStatusMessage: store.updateStatusMessage,
+                    onCheckForUpdate: { Task { await store.checkForUpdateAndDownload() } },
+                    onRedownload: { store.forceRedownload() },
+                    onUninstall: onUninstall,
+                    onShowLicense: onShowLicense
+                )
+            } header: {
+                Text("雾凇拼音管理")
+            }
+        }
+    }
+}

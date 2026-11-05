@@ -1,0 +1,1005 @@
+//
+//  KeyboardViewController.swift
+//  Keyboard
+//
+//  Created by DoubleShy0N on 5/10/26.
+//
+//  UIInputViewController 主控制器 — 管理键盘生命周期、根布局和 UI 刷新。
+//  所有状态逻辑委托给 KeyboardCore.KeyboardController。
+//
+//  根据 Apple 官方文档《Creating a Custom Keyboard》的要求：
+//  1. 必须继承 UIInputViewController（✅ 已满足）
+//  2. 通过 inputView 属性提供键盘 UI（✅ 系统自动管理，我们添加子视图即可）
+//  3. 使用 textDocumentProxy 进行所有文本操作（✅ 通过 UITextDocumentProxyAdapter 封装）
+//  4. 在 viewWillLayoutSubviews 中更新 needsInputModeSwitchKey（✅ 控制地球键显示）
+//  5. 响应 textDidChange 以适应不同的键盘类型（✅ 同步 UIKeyboardType 变化）
+//
+//  输入动作 → KeyboardViewController+InputActions.swift
+//  模式动作 → KeyboardViewController+ModeActions.swift
+//  删除连发 → KeyboardViewController+DeleteActions.swift
+//  UI 工厂方法 → KeyboardViewController+Layout.swift
+//  手势处理 → KeyboardViewController+Gestures.swift
+//  候选栏 → KeyboardViewController+CandidateBar.swift
+//  按钮样式 → KeyboardViewController+KeyFactory.swift
+//  状态刷新 → KeyboardViewController+Display.swift
+//
+
+import KeyboardCore
+import RimeBridge
+import UIKit
+
+/// `CADisplayLink` 会强引用 target；用弱代理避免系统跳过可见性回调时，
+/// 尚未触发的首帧门控反过来保活整个键盘控制器。
+@MainActor
+final class KeyboardFirstFrameDisplayLinkTarget: NSObject {
+    weak var controller: KeyboardViewController?
+    let armToken: UInt64
+    let generation: UInt64
+
+    init(controller: KeyboardViewController, armToken: UInt64, generation: UInt64) {
+        self.controller = controller
+        self.armToken = armToken
+        self.generation = generation
+    }
+
+    @objc func displayLinkDidFire(_ displayLink: CADisplayLink) {
+        guard let controller else {
+            displayLink.invalidate()
+            return
+        }
+        controller.handleRimeFirstFrameDisplayLinkTick(
+            displayLink: displayLink,
+            generation: generation,
+            armToken: armToken
+        )
+    }
+}
+
+@MainActor
+class KeyboardViewController: UIInputViewController {
+
+    /// v1 journal 与 legacy Logger 独立。闭包只会由 utility writer 调用，
+    /// 因而键盘按键路径不读取 App Group 或文件系统。
+    let diagnosticsJournal = DiagnosticsJournalRuntime(
+        origin: .keyboardExtension,
+        isMainAppWriter: false,
+        rootURL: {
+            FileManager.default
+                .containerURL(
+                    forSecurityApplicationGroupIdentifier: "group.com.DoubleShy0N.Universe-Keyboard"
+                )?
+                .appendingPathComponent("Diagnostics/v1", isDirectory: true)
+        },
+        isCategoryEnabled: { Logger.isLiveCategoryEnabled($0) },
+        writerVersion: .v6
+    )
+    lazy var commitTrace = CommitTraceRecorder(
+        context: { [weak self] in self?.textDocumentProxy.documentContextBeforeInput },
+        emit: { [weak self] sequence, fields in
+            guard let self else { return }
+            self.diagnosticsJournal.record(
+                code: .candidateCommitTrace, category: .display,
+                appearanceID: self.diagnosticsAppearanceID, actionSequence: sequence, fields: fields)
+        }
+    )
+    func traceClient(_ client: any TextInputClient) -> any TextInputClient {
+        TracingTextInputClient(client, recorder: commitTrace)
+    }
+    func beginCandidateTrace(_ entry: CommitTraceRecorder.Entry) {
+        commitTrace.begin(entry: entry, preeditBefore: controller.state.insertedPreeditCount > 0)
+    }
+    func endCandidateTrace() {
+        commitTrace.endSyncPhase(
+            preeditAfter: controller.state.insertedPreeditCount > 0,
+            partialAfter: controller.state.partialCommit != nil)
+    }
+    var diagnosticsAppearanceID: UUID?
+    var wakeDiagnosticContext: KeyboardWakeDiagnosticContext {
+        #if DEBUG
+            return KeyboardWakeDiagnosticContext(
+                appearanceID: diagnosticsAppearanceID,
+                isHighFidelityActive: isHighFidelityDiagnosticsActive,
+                expiration: highFidelityDiagnosticsExpiration
+            )
+        #else
+            return .disabled
+        #endif
+    }
+    #if DEBUG
+        var commitTraceTestDocumentIdentifier: UUID?
+        var commitTraceTestForceUnavailable = false
+        var isHighFidelityDiagnosticsActive = false
+        var highFidelityDiagnosticsExpiration: Date?
+        private var highFidelityExpirationTask: Task<Void, Never>?
+        var candidateTouchDiagnosticSequence: UInt64 = 0
+        var activeCandidateTouchDiagnosticSequence: UInt64?
+        var activeCandidateTouchDiagnosticBand: DiagnosticEvent.CandidateTouchBand?
+        var activeCandidateTouchDiagnosticDidHitCell = false
+        var activeCandidateTouchDiagnosticStartTime: CFTimeInterval?
+        var candidateVisibilityDiagnosticsTask: Task<Void, Never>?
+    #endif
+
+    /// Production is a compile-time choice; subclasses retain archived fixtures.
+    var t9PathRowReservation: T9PathRowReservation { .production }
+
+    // MARK: - 视图加载
+
+    /// 通过标准 UIViewController 加载流程安装输入视图。
+    ///
+    /// 不要在 `init` 中直接设置 `inputView`：系统可能因此跳过 `viewDidLoad`，
+    /// 让 `viewWillAppear` 在 KeyboardCore 控制器创建前到达，最终留下空白键盘。
+    override func loadView() {
+        let inputView = KeyboardAudioFeedbackInputView(frame: .zero, inputViewStyle: .keyboard)
+        inputView.onWindowRemoved = { [weak self] in
+            self?.keyboardHeightRotationPriority.restore()
+            self?.resetKeyboardHeightBudgetTrust()
+            self?.keyboardHeightAdjustmentAcceptsMarkers = false
+            self?.finishKeyboardHeightAdjustment(.windowRemoved)
+        }
+        view = inputView
+    }
+
+    // MARK: - 视图引用
+
+    /// Liquid Glass-inspired 外层承载面。只负责背景、圆角和轻量层次，不参与输入逻辑。
+    var keyboardSurfaceView: UIView!
+    /// 实验性系统材质层。默认关闭；由主 App 的实验开关控制。
+    var keyboardSurfaceMaterialView: UIVisualEffectView!
+    /// 统一 surface 底色层。覆盖整个键盘区域，避免候选栏单独形成矩形断层。
+    var keyboardSurfaceFillView: UIView!
+    /// Surface 顶部的克制高光，用于在浅色/深色模式下提供轻微玻璃层次。
+    var keyboardSurfaceHighlightView: UIView!
+    /// 自定义键盘高度约束。只约束整体输入视图高度，不改变单行按键高度。
+    let keyboardHeightRotationPriority = KeyboardHeightRotationPriority()
+    var keyboardHeightConstraint: NSLayoutConstraint? {
+        didSet {
+            keyboardHeightRotationPriority.constraintChanged(from: oldValue, to: keyboardHeightConstraint)
+        }
+    }
+    /// 根布局容器，垂直排列候选栏 + 4 行按键
+    var rootStack: UIStackView!
+    /// 候选栏的容器视图（包含 scrollView + 展开按钮）
+    var candidateBar: UIView!
+    /// 候选词横向滚动区域
+    var candidateScrollView: UIScrollView!
+    /// 横向候选集合视图，按需复用可见 cell
+    var candidateCollectionView: UICollectionView?
+    var lastCompactCandidateCommitTime: CFTimeInterval = 0
+    /// 地球键（输入法切换），iOS 要求所有第三方键盘必须提供
+    var nextKeyboardButton: UIButton!
+    /// Shift 键，位于第 3 行左侧
+    var shiftButton: UIButton!
+    /// 回车键，位于最后一行最右侧
+    var returnButton: UIButton!
+    /// 所有字母键按钮的引用，用于 Shift 状态下批量刷新标题
+    var letterButtons: [UIButton] = []
+    #if T9_AUTO_ANCHOR_DEVICE_PREFLIGHT
+        /// S6-A only: visible letter-group buttons in canonical slot order.
+        var devicePreflightT9LetterGroupButtons: [UIButton] = []
+        var devicePreflightRunToken: String?
+        var devicePreflightPreparedGeometryDigest: String?
+        var devicePreflightDidRecordExecutionGeometry = false
+    #endif
+
+    // MARK: - 业务逻辑控制器
+
+    /// 状态机核心，处理所有按键逻辑（纯逻辑，无 UI 依赖）
+    var controller: KeyboardController!
+    var documentIdentityTracker = KeyboardDocumentIdentityTracker()
+
+    #if T9_RESPONSIVE_CANARY_INTERNAL
+        /// Unique MainActor mode authority for the internal CANARY-001 artifact.
+        /// Ordinary Release does not compile this storage or its call sites.
+        let responsiveCanaryModeCoordinator = ResponsiveRimeCanaryModeCoordinator()
+        var responsiveCanaryRunID = ""
+        var responsiveCanaryExpiryTimer: Timer?
+        var responsiveCanaryConfigurationMonitor: Timer?
+        /// Defers fail-closed state mutation until visibility teardown has had an
+        /// unconditional chance to destroy the live owner.
+        var responsiveCanaryVisibilityContractFailure = false
+    #endif
+
+    #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+        /// Host-driven P3-D1 evidence identity. The runner may provide a short
+        /// token; otherwise each controller process receives a unique fallback.
+        /// It is diagnostic metadata only and never contains document content.
+        var p3d1LifecycleRunID: String = {
+            let raw =
+                ProcessInfo.processInfo.environment["P3_D1_T02_T03_RUN_ID"]
+                ?? "P3D1-T02-T03-\(UUID().uuidString)"
+            let sanitized = raw.unicodeScalars.filter {
+                CharacterSet.alphanumerics.contains($0)
+                    || $0 == "-"
+                    || $0 == "_"
+            }
+            let value = String(String.UnicodeScalarView(sanitized))
+            return String(value.prefix(96))
+        }()
+        var p3d1LifecycleLastCleared = false
+        var p3d1LifecycleLastReturnClean = false
+        var p3d1LifecycleAppliedCount = 0
+        var p3d1LifecycleDiagnosticElement: UIView?
+    #endif
+
+    // MARK: - 删除自动重复
+
+    /// 长按删除的计时器生命周期由专用协调器单独持有。
+    let deleteRepeatController = DeleteRepeatController()
+
+    // MARK: - 长按变体字符（UI 层状态）
+
+    /// 当前显示的变体字符弹出面板
+    var variantPopupView: KeyPopupView?
+    /// 正在长按的按钮引用
+    var longPressedButton: UIButton?
+    /// 展开的候选面板（流式布局）
+    var candidateExpandedPanel: UIView?
+    /// 展开面板内部的纵向滚动视图（用于无限滚动检测）
+    var expandedPanelScrollView: UIScrollView?
+    /// 展开态使用的流式候选列表，支持增量插入而无需重建整个面板
+    var expandedCandidateCollectionView: UICollectionView?
+    /// 展开/收起候选面板的 SF Symbol 按钮
+    var candidateExpandButton: UIButton?
+    /// 展开按钮宽度约束（无候选时设为 0 隐藏）
+    var candidateExpandButtonWidthConstraint: NSLayoutConstraint?
+    /// 候选面板是否处于展开状态
+    var wasT9RecoveryPresentationBlocked = false
+    var isCandidateExpanded = false
+    /// Precise pinyin path expansion (mutually exclusive with candidate expansion).
+    var isPinyinPathExpanded = false
+    weak var t9PinyinPathBarView: T9PinyinPathBarView?
+    weak var t9SelectPinyinButton: UIButton?
+    weak var t9SpaceButton: UIButton?
+    var pinyinPathExpandedPanel: UIView?
+    var pinyinPathCollectionView: UICollectionView?
+    var accumulatedPinyinPaths: [T9PinyinPath] = []
+    var pinyinPathNextGlobalIndex: Int = 0
+    var pinyinPathHasMore = false
+    var pinyinPathPanelGeneration: UInt64 = 0
+    var pinyinPathPanelProvenanceRevision: UInt64 = 0
+    /// 上次滑动翻页的时间戳（用于防抖，避免连续触发）
+    var lastPageSwipeTime: CFTimeInterval = 0
+    /// 累积候选词列表（无极滑动：随着用户滚动持续追加后续页的候选）
+    // This pure-value store is the actual paging model, not a shadow cache.
+    let candidatePresentationStore = RimeCandidatePresentationStore()
+    var candidateSnapshotOrigin: RimeOutputOrigin?
+    var accumulatedCandidates: [CandidateItem] {
+        get { candidatePresentationStore.page.items }
+        set { candidatePresentationStore.page.items = newValue }
+        _modify { yield &candidatePresentationStore.page.items }
+    }
+    /// RIME 是否还有更多页的候选
+    var hasMoreCandidates: Bool {
+        get { candidatePresentationStore.page.hasMore }
+        set { candidatePresentationStore.page.hasMore = newValue }
+    }
+    /// 是否正在加载更多候选（防止重复触发）
+    var isLoadingMoreCandidates: Bool = false
+    /// 候选栏已加载的页数深度。旧分页诊断字段保留，当前全局索引预取路径不再依赖它。
+    var candidatePageDepth: Int {
+        get { candidatePresentationStore.page.depth }
+        set { candidatePresentationStore.page.depth = newValue }
+    }
+    /// 下一次从 RIME 全局候选列表读取的起始索引。
+    var nextCandidateGlobalIndex: Int {
+        get { candidatePresentationStore.page.nextIndex }
+        set { candidatePresentationStore.page.nextIndex = newValue }
+    }
+    /// 当前候选快照对应的 raw input，用于丢弃旧输入的延迟预取结果。
+    var candidateSnapshotRawInput: String?
+    /// Core composition revision bound to the published T9/candidate snapshot.
+    /// Delayed candidateWindow results must match this revision.
+    var candidateSnapshotCompositionRevision: UInt64 = 0
+    /// 候选快照代数；每次 composition 变化递增。
+    var candidateSnapshotGeneration: Int = 0
+    /// 当前预取目标。展开态会加载更多候选，横向栏保持小批量。
+    var candidatePrefetchMode: CandidatePrefetchMode = .bar
+    /// 用户正在拖动候选栏或展开面板时不做同步 RIME 预取，避免滑动中卡住。
+    var isCandidateScrollInteracting = false
+    /// 滑动期间被推迟的预取请求，手势结束后再执行。
+    var deferredCandidatePrefetchMode: CandidatePrefetchMode?
+    /// 预取请求序号。新的输入、展开/收起或新的预取安排会让旧延迟任务自然失效。
+    var candidatePrefetchRequestSerial = 0
+    /// 候选 cell 尺寸缓存。滚动布局会频繁查询 sizeForItemAt，缓存可避免重复文本测量。
+    var candidateCellSizeCache: [CandidateCellSizeCacheKey: CGSize] = [:]
+    /// 记录每个按钮的 touchDown 时间戳，用于性能日志
+    var keyTouchDownTimes: [ObjectIdentifier: CFTimeInterval] = [:]
+    /// 已在 touchDown 发出反馈的按钮，避免 touchUpInside 业务方法重复播放声音/触感。
+    var keyPressFeedbackEmittedButtonIDs: Set<ObjectIdentifier> = []
+    /// 输入事件编号，将按键、引擎和渲染日志关联到同一次操作
+    var inputEventSequence = 0
+    /// 前一个字母输入完成时间，用于观察快速输入中的事件排队现象
+    #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+        var wakeProbeActiveTouches: Set<ObjectIdentifier> = []
+        var wakeProbeLastActivity = DispatchTime.now().uptimeNanoseconds
+        var wakeProbeIdleTask: Task<Void, Never>?
+        var wakeProbeControlsAvailable = false
+        var wakeProbeAppearanceOrdinal: UInt64 = 0
+    #endif
+    var lastInputCompletionTime: CFTimeInterval?
+    /// Last T9 digit key completion time (continuous-typing bar-prefetch idle gating).
+    var lastT9DigitKeyTime: CFTimeInterval?
+    /// 多错误纠错只在用户短暂停顿后执行；新输入会取消旧任务，避免占用按键热路径。
+    #if DEBUG && KEYBOARD_QUERY_COST_PROBE
+        var queryCostControls: UIStackView?
+        var queryCostTouchObserver: QueryCostTouchObserver?
+        var queryCostSequenceOrdinal: UInt64 = 1
+        var queryCostSequenceOpen = false
+        let queryCostClockAnchor = QueryCostClockAnchor()
+    #endif
+    var contextualTypoCorrectionWorkItem: DispatchWorkItem?
+    /// Controller-owned recall fence. Incremented before composition, page/mode,
+    /// visibility, engine-rebind or correction-disable work.
+    var recallEpoch: UInt64 = 0
+    var recallCompositionRevision: UInt64 = 0
+    lazy var typoCorrectionRecallCoordinator = TypoCorrectionRecallCoordinator(host: self)
+
+    // MARK: - 光标移动状态
+
+    /// 是否处于光标移动模式（长按空格键触发，此模式下其他按键禁用）
+    var isCursorMovementModeActive: Bool = false
+    /// 光标移动模式下，上一次有效计算的 X 坐标
+    var spaceCursorLastLocationX: CGFloat?
+    // MARK: - 键盘生命周期与尺寸状态
+
+    /// viewDidAppear 是否已被调用过。
+    var hasViewAppeared = false
+    /// 按键内容仅在键盘即将呈现时安装，避免初始过渡容器绘制整份键盘。
+    var isKeyboardUIInstalled = false
+    /// UI-only latch: never participates in composition, candidate authority or persistence.
+    var hasExpandedT9PinyinRowInPresentation = false
+    var hasEndedT9PinyinPresentation = false
+    /// 真正的 librime 只能在键盘已经呈现后启动。
+    /// 系统有时会预创建控制器后直接挂起，若此时打开用户词典会触发 0xdead10cc。
+    var hasActivatedVisibleRimeRuntime = false
+    /// 在 viewDidLoad 仅解析只读路径；不在尚未可见的扩展中启动 librime。
+    var pendingRimeRuntimeDirectories: (sharedDataDir: String, userDataDir: String)?
+    /// 首帧门控将 RIME 的重 I/O 推迟到键盘已跨过两个显示节拍之后。
+    /// 它只影响创建时机，不改变 session、候选或按键的语义。
+    var rimeFirstFrameDisplayLink: CADisplayLink?
+    var rimeFirstFrameDisplayLinkTarget: KeyboardFirstFrameDisplayLinkTarget?
+    var rimeFirstFrameGateStartTime: CFTimeInterval = 0
+    var rimeFirstFrameGateTickCount = 0
+    /// Host-active / appearance pairing. Existing dirty lifecycle flags stay authoritative for UI.
+    let hostLifecycleRecoveryGate = KeyboardHostLifecycleRecoveryGate()
+
+    // MARK: - 缓存的设置值
+
+    /// 缓存的按键音开关状态，避免每次按键都通过 XPC 跨进程访问 UserDefaults。
+    /// Apple 最佳实践：自定义键盘扩展运行在独立进程中，每次 XPC 调用都有开销。
+    /// 缓存这些值可以显著减少每次按键的延迟。
+    var cachedKeyClickEnabled: Bool = true
+    /// 每次可见周期只读取一次；可注入存储，不在输入热路径轮询App Group。
+    var candidateFontValueSource: (() -> Any?)?
+    var candidateFontNeedsRead = true
+    var candidateFontSnapshot = CandidateFontSnapshot(traits: .current)
+    /// Cached layout preference (read on appear/activate only).
+    var cachedLayoutStyle: KeyboardLayoutStyle = .twentySixKey
+    /// Cached T9 readiness match for Chinese nine-key chrome.
+    var cachedT9ReadinessMatched: Bool = false
+    var cachedHapticEnabled: Bool = false
+
+    /// Feedback resources and cached levels stay owned by the view controller; methods live in +Feedback.
+    let hapticGenerator = UIImpactFeedbackGenerator(style: .light)
+    let modeEnterHapticGenerator = UIImpactFeedbackGenerator(style: .heavy)
+    static let appGroupID = "group.com.DoubleShy0N.Universe-Keyboard"
+
+    /// 原型说明（无完全访问、无 App Group）：
+    /// 共享容器可用时沿用 App Group；不可用时回退到键盘扩展自己的 UserDefaults，
+    /// 保证候选学习、反馈与键盘设置在不申请完全访问时仍然可用。
+    static var effectiveDefaults: UserDefaults {
+        UserDefaults(suiteName: Self.appGroupID) ?? .standard
+    }
+
+    lazy var sharedDefaults = Self.effectiveDefaults
+    lazy var typoCorrectionLearningStore = TypoCorrectionLearningStore(
+        defaults: sharedDefaults
+    )
+    lazy var typingStatisticsWriter = TypingStatisticsWriter(appGroupID: Self.appGroupID)
+    var cachedTypingIntelligenceEnabled = false
+    var cachedTypingIntelligenceResetEpoch = 0
+    var cachedHapticLevel: KeyboardFeedbackLevel = .defaultLevel
+    var cachedHapticIntensity: CGFloat = 0.5
+    var cachedLiquidGlassMaterialEnabled = false
+    var deleteRepeatEffectiveFeedbackCount = 0
+    /// Live delete-key hold. Nil when no finger is down on Delete.
+    var deleteGestureSession: DeleteKeyGestureSession?
+    var deleteTrashBubbleView: DeleteTrashBubbleView?
+    var deleteBubbleTimer: Timer?
+    /// 不在按键路径写入：仅在键盘可见期间维持同步安全检查所需的心跳。
+    var rimeSyncActivityHeartbeatTimer: Timer?
+
+    // MARK: - 布局常量
+
+    /// 键盘内容顶部留白。保留少量空间，避免候选栏贴住系统外层圆角。
+    let keyboardContentTopInset: CGFloat = 2
+    /// 键盘内容底部留白。底部由系统容器提供圆角与安全区域，这里只保留极小间距。
+    let keyboardContentBottomInset: CGFloat = 0
+    /// 候选栏高度（点）。系统键盘外层容器已提供顶部承载面，候选栏保持更紧凑。
+    var candidateBarHeight: CGFloat { KeyboardDesignTokens.CandidateBar.totalHeight }
+    /// Fixed precise pinyin path bar reservation for Chinese nine-key (ADR 0020).
+    var t9PinyinPathBarHeight: CGFloat { KeyboardDesignTokens.T9PinyinBar.visibleHeight }
+    /// 仅用于裁切内部布局，避免透明内容超出系统外层大圆角；不绘制额外 surface。
+    let keyboardSurfaceMaskCornerRadius: CGFloat = 34
+    /// 本轮显示的有效行高；用户期望值保存在独立快照里，夹取不回写。
+    var keyHeight = CGFloat(KeyboardHeightSettings.defaultRowHeight)
+    /// 默认读写扩展私有偏好；测试注入独立存储，不走共享设置快照。
+    var keyboardRowHeightSource: () -> Int? = { KeyboardHeightPreferenceStore(defaults: .standard).read() }
+    var keyboardRowHeightSink: (Int?) -> Void = { KeyboardHeightPreferenceStore(defaults: .standard).write($0) }
+    var keyboardHeightAdjustmentTokenConsumer: (UUID) -> Bool = {
+        KeyboardHeightAdjustmentTokenStore(defaults: .standard).consume($0)
+    }
+    var keyboardHeightAdjustmentAcceptsMarkers = false
+    var keyboardHeightAdjustmentSession: KeyboardHeightAdjustmentSession?
+    var keyboardHeightAdjustmentOverlay: KeyboardHeightAdjustmentOverlay?
+    var keyboardHeightGeometrySource: (() -> KeyboardHeightGeometry?)?
+    var keyboardHeightSettings = KeyboardHeightSettings()
+    var keyboardHeightNeedsRead = true
+    var isKeyboardHeightManaged = false
+    var keyboardHeightGeometry: KeyboardHeightGeometry?
+    var keyboardAcceptedHeight: CGFloat?
+    var keyboardHeightBudgetRequest: KeyboardHeightBudgetRequest?
+    var keyboardHeightBudgetNow: () -> CFTimeInterval = { CACurrentMediaTime() }
+    var keyboardHeightBudgetFrameSource: KeyboardHeightBudgetFrameSource = {
+        KeyboardHeightBudgetDisplayLink(handler: $0)
+    }
+    var keyboardHeightBudgetFrameObservation: (any KeyboardHeightBudgetFrameObservation)?
+    var keyboardHeightBudgetObservationID: UUID?
+    var keyboardHeightBudgetObservationExhausted = false
+    var keyboardHeightBudgetExhaustedHeight: CGFloat?
+    var keyboardUncompressedHeight: CGFloat?
+    var keyboardHeightConstraints: [KeyboardRowHeightConstraint] = []
+    var keyboardHeightStatus: String?
+    var isUpdatingKeyboardHeight = false
+    /// 行间垂直间距（点）。8pt 对齐网格，接近原生键盘行间距。
+    let keySpacing: CGFloat = 8
+    /// 字母区与底部功能区之间的分组间距。只比常规行距略大，避免键盘显得松散。
+    let keyboardGroupSpacing: CGFloat = 10
+    /// 行内按键水平间距（点）。保持 6pt 紧凑排列，与原生键盘一致（行内键距 < 行间距）。
+    let keyHorizontalSpacing: CGFloat = 6
+    /// 第三行功能键与字母组之间的分组间距，对齐字母区与底部功能区的视觉节奏。
+    let thirdRowFunctionSpacing: CGFloat = 10
+    /// 主要功能键宽度（Shift、123、删除、语言切换），保持触控舒适但弱化视觉占比。
+    let primaryFunctionKeyWidth: CGFloat = 46
+    /// 功能键 SF Symbol 字号（Delete / Return / Globe / 表情）。与文字标题字号分离。
+    let functionKeySymbolPointSize: CGFloat = 22
+    /// 字母键文字字号（26 键字母、九键 ABC… 字母组）。
+    let characterKeyTitlePointSize: CGFloat = 17
+    /// 功能键文字标题字号（中/英、123、选拼音、#+= 等），小于符号键。
+    let functionKeyTitlePointSize: CGFloat = 15
+    /// 空格键文字字号（含「拼音」）。
+    let spaceKeyTitlePointSize: CGFloat = 14
+    /// 按键圆角半径（点），使用 .continuous 曲线获得 iOS 原生外观
+    let keyCornerRadius: CGFloat = 9
+    // MARK: === 生命周期 ===
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        bootstrapKeyboard()
+    }
+
+    /// deinit 是键盘扩展被销毁前的最后一个清理机会。
+    /// Apple 文档指出：系统可能在键盘关闭后保留扩展进程一段时间，
+    /// 所以不要假设 deinit 会在键盘关闭时立即调用。
+    /// 但一旦调用，应该释放所有资源。
+    deinit {
+        #if DEBUG
+            highFidelityExpirationTask?.cancel()
+            candidateVisibilityDiagnosticsTask?.cancel()
+        #endif
+        // Swift 6 的 deinit 不保证运行在 MainActor；可见性结束时已清理心跳。
+        // 若系统直接销毁扩展，最后一条心跳会在 75 秒后自然失效，宁可多跳过一次同步。
+        // 连删协调器在 viewWillDisappear 中停止；闭包仅弱引用本控制器，
+        // 析构路径无需跨 actor 访问 UIKit/Timer 状态。
+        // 移除所有通知观察者，防止野指针
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        commitTrace.enabled = Logger.isLiveCategoryEnabled(.display)
+        prepareCandidateFontForAppearance()
+        keyboardHeightAdjustmentAcceptsMarkers = true
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            wakeOwnerProbeWillAppear()
+        #endif
+        Logger.shared.resumePersistenceForExtensionLifecycle()
+        diagnosticsJournal.resumeForExtensionLifecycle()
+        #if DEBUG
+            refreshHighFidelityDiagnosticsMode()
+            resetCandidateTouchDiagnosticCorrelation()
+        #endif
+        diagnosticsAppearanceID = UUID()
+        KeyboardWakeDiagnosticProducer.recordKeyboardLifecycle(
+            .viewWillAppear,
+            journal: diagnosticsJournal,
+            context: wakeDiagnosticContext
+        )
+        diagnosticsJournal.record(
+            code: .presentationAppeared,
+            category: .display,
+            appearanceID: diagnosticsAppearanceID
+        )
+        #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+            p3d1RecordLifecycleMarker("APPEAR_BEGIN", reason: "viewWillAppear")
+        #endif
+        #if T9_AUTO_ANCHOR_DEVICE_PREFLIGHT
+            // iOS may reuse an Extension selected before the main App prepared the
+            // arm. Consume a different fresh token when visibility returns instead
+            // of requiring a new viewDidLoad or process.
+            _ = consumeFreshPreparedDevicePreflightRunIfAvailable()
+        #endif
+        hostLifecycleRecoveryGate.noteViewWillAppear(context: currentHostExtensionContextID())
+        let appearanceCanary = resolveHostRecoveryCanaryPermission(grantVisibilityResume: true)
+        let canaryResumeRequested: Bool = {
+            if case .visibilitySuspended(let granted) = appearanceCanary {
+                return granted
+            }
+            return false
+        }()
+        if appearanceCanary.permitsOwnerStarting(source: .appearance) {
+            performHostSharedResumeAfterLicense(canaryResumeRequested: canaryResumeRequested)
+        } else {
+            #if T9_RESPONSIVE_CANARY_INTERNAL
+                applyResponsiveCanaryKillSwitchIfNeeded()
+            #endif
+            startRimeSyncActivityHeartbeat()
+        }
+        // 行高快照由 bootstrap 初始化；可见性回调只刷新已初始化的管理状态。
+        if isKeyboardHeightManaged { prepareKeyboardHeightForAppearance() }
+        beginT9PinyinPresentationIfNeeded()
+        installKeyboardUIIfNeeded()
+        synchronizeKeyboardHeightLayout()
+        #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+            p3d1RecordLifecycleMarker("APPEAR", reason: "viewWillAppear")
+        #endif
+    }
+
+    /// viewDidAppear 在键盘视图对用户可见时调用。
+    /// 清理返回前未完成的 RIME 组合状态；仅在后续输入确认
+    /// session 已失效时，控制器才会触发真正的 runtime 恢复。
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        KeyboardWakeDiagnosticProducer.recordKeyboardLifecycle(
+            .viewDidAppear,
+            journal: diagnosticsJournal,
+            context: wakeDiagnosticContext
+        )
+        #if DEBUG
+            recordKeyboardVisualDiagnostic("DID_APPEAR_BEFORE")
+        #endif
+        let hasWindow = view.window != nil
+        hostLifecycleRecoveryGate.noteViewDidAppear(hasWindow: hasWindow)
+        let pendingPreview = hostLifecycleRecoveryGate.previewHostDidBecomeActive(
+            context: currentHostExtensionContextID(),
+            hasWindow: hasWindow
+        )
+        let pendingCanary = resolveHostRecoveryCanaryPermission(
+            grantVisibilityResume: pendingPreview == .performSharedResume
+        )
+        let pendingResumeRequested: Bool = {
+            if case .visibilitySuspended(let granted) = pendingCanary {
+                return granted
+            }
+            return false
+        }()
+        let pendingAction = hostLifecycleRecoveryGate.handleVisibleWindowEstablished(
+            hasWindow: hasWindow,
+            canary: pendingCanary
+        )
+        executeHostRecoveryAction(pendingAction, canaryResumeRequested: pendingResumeRequested)
+        if pendingAction != .performSharedResume, pendingAction != .rearmFirstFrameGate,
+            hostLifecycleRecoveryGate.phase == .visible, hasWindow
+        {
+            activateRimeRuntimeAfterKeyboardPresentation()
+        }
+        handleKeyboardDidAppear()
+        view.setNeedsLayout()
+        // Establish host identity after presentation, before ordinary interaction.
+        synchronizeAfterTextChange()
+        #if DEBUG
+            recordKeyboardVisualDiagnostic("DID_APPEAR_AFTER")
+        #endif
+        #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+            p3d1RecordLifecycleMarker("APPEAR_VISIBLE", reason: "viewDidAppear")
+        #endif
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        commitTrace.close(.disappear)
+        commitTrace.enabled = false
+        super.viewWillDisappear(animated)
+        candidateFontNeedsRead = true
+        keyboardHeightRotationPriority.restore()
+        keyboardHeightAdjustmentAcceptsMarkers = false
+        finishKeyboardHeightAdjustment(.disappeared)
+        keyboardHeightNeedsRead = true
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            wakeOwnerProbeWillDisappear()
+        #endif
+        KeyboardWakeDiagnosticProducer.recordKeyboardLifecycle(
+            .viewWillDisappear,
+            journal: diagnosticsJournal,
+            context: wakeDiagnosticContext
+        )
+        #if DEBUG && KEYBOARD_QUERY_COST_PROBE
+            typoCorrectionRecallCoordinator.queryCostProbe.invalidate(.lifecycle)
+            queryCostClockAnchor.invalidate()
+        #endif
+        typoCorrectionRecallCoordinator.invalidateTypoCorrectionRecall()
+        diagnosticsJournal.record(
+            code: .presentationFrame,
+            category: .display,
+            appearanceID: diagnosticsAppearanceID,
+            fields: [
+                .flag(
+                    .isCandidateBarVisible,
+                    candidateCollectionView?.numberOfItems(inSection: 0) != 0
+                ),
+                .count(.highlightedKeyCount, keyPressFeedbackEmittedButtonIDs.count),
+            ]
+        )
+        #if DEBUG
+            recordKeyboardVisualDiagnostic("WILL_DISAPPEAR_BEFORE")
+        #endif
+        #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+            p3d1RecordLifecycleMarker("DISAPPEAR_BEGIN", reason: "viewWillDisappear")
+        #endif
+        hostLifecycleRecoveryGate.noteViewWillDisappear()
+        suspendKeyboardRuntime(reason: "viewWillDisappear", updateUI: true)
+        #if DEBUG
+            recordKeyboardVisualDiagnostic("WILL_DISAPPEAR_AFTER")
+        #endif
+        #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+            p3d1RecordLifecycleMarker("DISAPPEAR", reason: "viewWillDisappear", cleared: true)
+        #endif
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        noteT9PinyinPresentationDidDisappear(hasWindow: viewIfLoaded?.window != nil)
+    }
+
+    /// Releases every resource that could cross the extension suspension boundary.
+    /// RIME is finalized first because its database locks are the critical resource;
+    /// diagnostic persistence is disabled last so no delayed App Group write survives.
+    func suspendKeyboardRuntime(reason: String, updateUI: Bool) {
+        resetKeyboardHeightBudgetTrust()
+        // 宿主挂起不保证先触发willDisappear；同步撤销租约并失效迟到完成。
+        keyboardHeightRotationPriority.restore()
+        keyboardHeightAdjustmentAcceptsMarkers = false
+        finishKeyboardHeightAdjustment(.disappeared)
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            recordWakeOwnerProbe(.suspendBegin)
+        #endif
+        #if DEBUG
+            cancelCandidateVisibilityDiagnostic()
+            recordKeyboardVisualDiagnostic("SUSPEND_BEGIN_\(reason)")
+        #endif
+        cancelRimeFirstFrameGate()
+        stopRimeSyncActivityHeartbeat()
+        #if T9_RESPONSIVE_CANARY_INTERNAL
+            responsiveCanaryConfigurationMonitor?.invalidate()
+            responsiveCanaryConfigurationMonitor = nil
+            let canaryVisibilityExit = responsiveCanaryModeCoordinator.beginVisibilityExit()
+            if canaryVisibilityExit {
+                responsiveCanaryVisibilityContractFailure = false
+                controller.beginResponsiveCanaryPresentationFence()
+            }
+            let mustKeepFencedOwner = {
+                switch responsiveCanaryModeCoordinator.state {
+                case .fenceIssued:
+                    return controller.threadAffineRimeCoordinator != nil
+                default:
+                    return false
+                }
+            }()
+        #endif
+        #if T9_RESPONSIVE_CANARY_INTERNAL
+            if !mustKeepFencedOwner {
+                controller.suspendRimeForVisibilityChange()
+                if canaryVisibilityExit {
+                    controller.finalizeResponsiveCanaryFencedPresentations()
+                }
+            }
+        #else
+            controller.suspendRimeForVisibilityChange()
+        #endif
+        #if T9_RESPONSIVE_CANARY_INTERNAL
+            if canaryVisibilityExit {
+                let teardown = controller.lastResponsiveCanaryVisibilityTeardown
+                let receiptsValid =
+                    teardown.map {
+                        responsiveCanaryModeCoordinator.recordVisibilityAbandonments(
+                            $0.abandonedReceipts
+                        )
+                    } ?? false
+                responsiveCanaryModeCoordinator.completeVisibilityExit(
+                    teardownPositive: receiptsValid && teardown?.isPositive == true
+                )
+                if responsiveCanaryVisibilityContractFailure {
+                    responsiveCanaryModeCoordinator.failClosed(
+                        "visibilityPresentationContractFailure"
+                    )
+                }
+            }
+        #endif
+
+        let effects = cleanupTransientKeyboardState(
+            reason: reason,
+            abandonsComposition: true
+        )
+        if updateUI, !effects.isEmpty, isKeyboardUIInstalled {
+            syncUI(with: effects)
+        }
+        #if DEBUG
+            recordKeyboardVisualDiagnostic("SUSPEND_END_\(reason)", effects: effects)
+        #endif
+        Logger.shared.debug(
+            "\(reason): runtime released before extension suspension, bounds=\(view.bounds)",
+            category: .display
+        )
+        #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+            p3d1RecordLifecycleMarker("SUSPEND_RELEASE", reason: reason, cleared: true)
+        #endif
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            recordWakeOwnerProbe(.suspendEnd)
+        #endif
+        Logger.shared.suspendPersistenceForExtensionLifecycle()
+        diagnosticsJournal.suspendForExtensionLifecycle()
+        diagnosticsAppearanceID = nil
+    }
+
+    func currentHostExtensionContextID() -> KeyboardHostExtensionContextID? {
+        guard let extensionContext else { return nil }
+        return KeyboardHostExtensionContextID(extensionContext)
+    }
+
+    func hostNotificationMatchesCurrentExtensionContext(_ notification: Notification) -> Bool {
+        guard let current = extensionContext else { return false }
+        guard let object = notification.object as AnyObject? else { return false }
+        return object === current
+    }
+
+    func resolveHostRecoveryCanaryPermission(
+        grantVisibilityResume: Bool
+    ) -> KeyboardHostRecoveryCanaryPermission {
+        #if T9_RESPONSIVE_CANARY_INTERNAL
+            switch responsiveCanaryModeCoordinator.state {
+            case .baselineActive:
+                return .baselineActive
+            case .canaryStarting:
+                return .canaryStarting
+            case .canaryActive:
+                return .canaryActive
+            case .visibilityEnding:
+                return .visibilityEnding
+            case .visibilitySuspended:
+                if grantVisibilityResume {
+                    return .visibilitySuspended(
+                        resumeGranted: responsiveCanaryModeCoordinator.beginVisibilityResume()
+                    )
+                }
+                return .visibilitySuspended(resumeGranted: false)
+            case .fenceIssued:
+                return .fenceIssued
+            case .baselineRecoveryPermitted:
+                return .baselineRecoveryPermitted
+            case .fencedUnavailable:
+                return .fencedUnavailable
+            }
+        #else
+            return .nonCanaryBuild
+        #endif
+    }
+
+    func performHostSharedResumeAfterLicense(canaryResumeRequested: Bool) {
+        KeyboardWakeDiagnosticProducer.recordRimeResumeStarted(
+            journal: diagnosticsJournal,
+            context: wakeDiagnosticContext
+        )
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            recordWakeOwnerProbe(.resumeBegin)
+        #endif
+        controller.resumeRimeAfterVisibilityChange()
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            recordWakeOwnerProbe(.resumeEnd)
+        #endif
+        #if T9_RESPONSIVE_CANARY_INTERNAL
+            if canaryResumeRequested {
+                if controller.threadAffineRimeCoordinator?.isOwnerReady == true,
+                    let sessionInstance = responsiveCanaryModeCoordinator.markCanaryReady()
+                {
+                    controller.activateResponsiveCanarySessionInstance(
+                        runID: responsiveCanaryRunID,
+                        modeGeneration: responsiveCanaryModeCoordinator.modeGeneration,
+                        sessionInstance: sessionInstance
+                    )
+                    controller.resumeResponsiveCanaryPresentationAfterOwnerReady()
+                    startResponsiveCanaryConfigurationMonitor()
+                } else {
+                    responsiveCanaryModeCoordinator.failClosed("visibilityResumeNotReady")
+                }
+            }
+            applyResponsiveCanaryKillSwitchIfNeeded()
+        #endif
+        // Resume may fail-close T9 → 26-key; apply before chrome is built/shown.
+        // Unwrap responsive bridge so chrome still sees RimeEngineImpl (R3).
+        if let engine = controller.underlyingRimeEngine as? RimeEngineImpl {
+            applyRealizedRuntimeSelection(from: engine)
+        }
+        startRimeSyncActivityHeartbeat()
+    }
+
+    private func startRimeSyncActivityHeartbeat() {
+        guard rimeSyncActivityHeartbeatTimer == nil else { return }
+
+        let defaults = sharedDefaults
+        RimeSyncKeyboardActivity.recordVisibleKeyboard(in: defaults)
+
+        let appGroupID = Self.appGroupID
+        let timer = Timer(timeInterval: 25, repeats: true) { _ in
+            let sharedDefaults = UserDefaults(suiteName: appGroupID) ?? .standard
+            RimeSyncKeyboardActivity.recordVisibleKeyboard(in: sharedDefaults)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        rimeSyncActivityHeartbeatTimer = timer
+    }
+
+    #if DEBUG
+        /// 只在可见性边界读取一次 App Group 偏好。按键事件只能读取本内存标记，
+        /// 绝不为判断高保真状态而访问 `UserDefaults`。
+        private func refreshHighFidelityDiagnosticsMode() {
+            highFidelityExpirationTask?.cancel()
+            isHighFidelityDiagnosticsActive = DiagnosticsHighFidelityConfiguration.isEnabled(
+                in: sharedDefaults
+            )
+            let expiration = DiagnosticsHighFidelityConfiguration.expiration(in: sharedDefaults)
+            highFidelityDiagnosticsExpiration = isHighFidelityDiagnosticsActive ? expiration : nil
+            guard isHighFidelityDiagnosticsActive, let expiration = highFidelityDiagnosticsExpiration
+            else {
+                cancelCandidateVisibilityDiagnostic()
+                resetCandidateTouchDiagnosticCorrelation()
+                return
+            }
+            let remaining = max(0, expiration.timeIntervalSinceNow)
+            highFidelityExpirationTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(remaining))
+                guard !Task.isCancelled else { return }
+                self?.isHighFidelityDiagnosticsActive = false
+                self?.highFidelityDiagnosticsExpiration = nil
+                self?.cancelCandidateVisibilityDiagnostic()
+                self?.resetCandidateTouchDiagnosticCorrelation()
+            }
+        }
+    #endif
+
+    private func stopRimeSyncActivityHeartbeat() {
+        rimeSyncActivityHeartbeatTimer?.invalidate()
+        rimeSyncActivityHeartbeatTimer = nil
+        // Do not write UserDefaults while the extension is crossing into suspension.
+        // The heartbeat has a short expiry, so the main App conservatively delays sync
+        // instead of risking another App Group file lock at this boundary.
+    }
+
+    /// viewWillLayoutSubviews 在子视图布局之前调用。
+    /// Apple 文档要求：在此更新 needsInputModeSwitchKey 的可见性。
+    /// 该属性告知系统是否需要显示"地球键"让用户在多个键盘间切换。
+    /// 如果返回 true 但不显示地球键，用户将无法切换到其他键盘（违反 App Store 审核要求）。
+    override func viewWillLayoutSubviews() {
+        // Apple 文档明确要求：在此生命周期方法中更新地球键可见性
+        // 这是因为 needsInputModeSwitchKey 的值可能在键盘生命周期中改变
+        // （例如用户启用了新键盘），必须实时响应
+        nextKeyboardButton?.isHidden = !needsInputModeSwitchKey
+        if keyboardSurfaceView != nil {
+            applyKeyboardSurfaceStyle()
+        }
+        super.viewWillLayoutSubviews()
+    }
+
+    /// viewDidLayoutSubviews 记录系统实际采用的输入视图尺寸。
+    /// 若仍出现临时高度，此日志可区分系统容器行为与已安装内容布局。
+    private var lastLoggedBounds: CGRect = .zero
+
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        // 先失效上次租约，再让UIKit开始新过渡；迟到/重复的完成回调不重试。
+        let token = keyboardHeightRotationPriority.beginTransition()
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] context in
+            guard let self else { return }
+            let elevated = self.keyboardHeightRotationPriority.completeTransition(
+                token, cancelled: context.isCancelled, constraint: self.keyboardHeightConstraint,
+                hasWindow: self.view.window != nil,
+                isVisible: self.hostLifecycleRecoveryGate.phase == .visible,
+                actualHeight: self.view.bounds.height, requestedHeight: self.keyboardUncompressedHeight)
+            guard elevated else { return }
+            self.view.superview?.setNeedsLayout()
+            self.view.superview?.layoutIfNeeded()
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if isKeyboardHeightManaged { synchronizeKeyboardHeightLayout(isHostLayout: true) }
+        #if DEBUG && KEYBOARD_QUERY_COST_PROBE
+            layoutQueryCostProbeControls()
+        #endif
+
+        if let panel = candidateExpandedPanel as? ExpandedCandidatePanelContainerView {
+            rootStack.layoutIfNeeded()
+            panel.layoutIfNeeded()
+            panel.synchronizeCoveredGeometry()
+        }
+
+        #if DEBUG
+            T9QA001DeviceTrace.shared.layout(.rootLayout, owner: self)
+        #endif
+
+        // Explicit refresh also completes pending nested key layout. The root
+        // stack publishes on its own layout changes without waiting for us.
+        (rootStack as? KeyboardInputHitAreaStackView)?.refreshKeyTouchGeometry()
+        layoutKeyboardHeightAdjustmentOverlay()
+
+        // 仅在 bounds 变化时记录（避免 layout 循环时刷屏日志）
+        if view.bounds != lastLoggedBounds {
+            lastLoggedBounds = view.bounds
+            Logger.shared.debug(
+                "viewDidLayoutSubviews: bounds=\(view.bounds)",
+                category: .display
+            )
+        }
+        #if T9_AUTO_ANCHOR_DEVICE_PREFLIGHT
+            recordDevicePreflightPreparedGeometryIfPossible()
+            // Capture execution geometry from the first complete visible T9 layout
+            // when UIKit finishes a reload. This is still before the first key and
+            // avoids treating a transient pre-layout pass as a permanent failure.
+            if devicePreflightPreparedGeometryDigest != nil {
+                recordDevicePreflightExecutionGeometryBeforeFirstT9Key()
+            }
+        #endif
+    }
+
+    // MARK: === 文本变化回调 ===
+
+    /// textWillChange 在宿主 App 的文本即将变化时调用。
+    /// Apple 文档：可在此准备键盘状态以响应即将到来的文本变更。
+    /// 当前我们不需要在文本变化前做任何预处理，保留空实现。
+    override func textWillChange(_ textInput: UITextInput?) {
+        // 预留：可在文本变化前做预处理
+    }
+
+    /// textDidChange 在宿主 App 的文本发生变化后调用。
+    /// Apple 文档要求自定义键盘在此方法中：
+    /// 1. 检查 textDocumentProxy.keyboardType 以识别宿主 App 期望的键盘类型
+    /// 2. 根据键盘类型调整布局
+    /// 3. 更新地球键的文本颜色以匹配键盘外观（浅色/深色模式）
+    ///
+    /// 我们的实现额外检查：
+    /// - 自动大写是否需要重新应用（切换键盘类型后）
+    /// - RIME 引擎部署状态
+    override func textDidChange(_ textInput: UITextInput?) {
+        synchronizeAfterTextChange()
+    }
+
+    // MARK: === 内存警告处理 ===
+
+    /// Apple 文档《Creating a Custom Keyboard》明确指出：
+    /// "自定义键盘扩展运行在独立进程中，有着严格的内存限制；
+    ///  超出这些限制会导致系统终止你的扩展。"
+    ///
+    /// "始终处理低内存通知，释放非必要资源。"
+    ///
+    /// 我们的键盘扩展内存上限约 50-80MB（取决于设备型号）。
+    /// 当系统内存紧张时，UIKit 会调用此方法。
+    /// 我们应该释放可重新创建的缓存和资源。
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        releaseRecoverableResourcesAfterMemoryWarning()
+    }
+
+}
+
+enum CandidatePrefetchMode {
+    case bar
+    case expanded
+}

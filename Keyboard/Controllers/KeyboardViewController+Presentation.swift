@@ -1,0 +1,333 @@
+import KeyboardCore
+import UIKit
+
+extension KeyboardViewController {
+    /// 在系统输入容器中安装内容；所有行与总高使用同一份有效行高。
+    func setupRootStack() {
+        keyboardSurfaceView = UIView()
+        keyboardSurfaceView.translatesAutoresizingMaskIntoConstraints = false
+
+        keyboardSurfaceMaterialView = UIVisualEffectView(effect: nil)
+        keyboardSurfaceMaterialView.translatesAutoresizingMaskIntoConstraints = false
+
+        keyboardSurfaceFillView = UIView()
+        keyboardSurfaceFillView.translatesAutoresizingMaskIntoConstraints = false
+
+        keyboardSurfaceHighlightView = UIView()
+        keyboardSurfaceHighlightView.translatesAutoresizingMaskIntoConstraints = false
+
+        rootStack = KeyboardInputHitAreaStackView()
+        rootStack.axis = .vertical
+        rootStack.spacing = keySpacing
+        rootStack.distribution = .fill
+        rootStack.alignment = .fill
+        rootStack.translatesAutoresizingMaskIntoConstraints = false
+
+        view.clipsToBounds = true
+        applyKeyboardSurfaceStyle()
+
+        view.addSubview(keyboardSurfaceView)
+        keyboardSurfaceView.addSubview(keyboardSurfaceMaterialView)
+        keyboardSurfaceView.addSubview(keyboardSurfaceFillView)
+        keyboardSurfaceView.addSubview(keyboardSurfaceHighlightView)
+        keyboardSurfaceView.addSubview(rootStack)
+        NSLayoutConstraint.activate([
+            keyboardSurfaceView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            keyboardSurfaceView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            keyboardSurfaceView.topAnchor.constraint(equalTo: view.topAnchor),
+            keyboardSurfaceView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            keyboardSurfaceMaterialView.leadingAnchor.constraint(equalTo: keyboardSurfaceView.leadingAnchor),
+            keyboardSurfaceMaterialView.trailingAnchor.constraint(equalTo: keyboardSurfaceView.trailingAnchor),
+            keyboardSurfaceMaterialView.topAnchor.constraint(equalTo: keyboardSurfaceView.topAnchor),
+            keyboardSurfaceMaterialView.bottomAnchor.constraint(equalTo: keyboardSurfaceView.bottomAnchor),
+
+            keyboardSurfaceFillView.leadingAnchor.constraint(equalTo: keyboardSurfaceView.leadingAnchor),
+            keyboardSurfaceFillView.trailingAnchor.constraint(equalTo: keyboardSurfaceView.trailingAnchor),
+            keyboardSurfaceFillView.topAnchor.constraint(equalTo: keyboardSurfaceView.topAnchor),
+            keyboardSurfaceFillView.bottomAnchor.constraint(equalTo: keyboardSurfaceView.bottomAnchor),
+
+            keyboardSurfaceHighlightView.leadingAnchor.constraint(
+                equalTo: keyboardSurfaceView.leadingAnchor, constant: 18),
+            keyboardSurfaceHighlightView.trailingAnchor.constraint(
+                equalTo: keyboardSurfaceView.trailingAnchor, constant: -18),
+            keyboardSurfaceHighlightView.topAnchor.constraint(equalTo: keyboardSurfaceView.topAnchor, constant: 1),
+            keyboardSurfaceHighlightView.heightAnchor.constraint(equalToConstant: 1),
+
+            rootStack.leadingAnchor.constraint(equalTo: keyboardSurfaceView.leadingAnchor, constant: 7),
+            rootStack.trailingAnchor.constraint(equalTo: keyboardSurfaceView.trailingAnchor, constant: -7),
+            rootStack.topAnchor.constraint(equalTo: keyboardSurfaceView.topAnchor, constant: keyboardContentTopInset),
+            rootStack.bottomAnchor.constraint(
+                equalTo: keyboardSurfaceView.bottomAnchor, constant: -keyboardContentBottomInset),
+        ])
+        #if DEBUG && T9_P3_D1_LIFECYCLE_HARNESS
+            p3d1InstallLifecycleAccessibilityElementIfNeeded()
+        #endif
+        Logger.shared.debug(
+            "setupRootStack: transparent surface, content top+\(keyboardContentTopInset), "
+                + "bottom-\(keyboardContentBottomInset), hMargin=7",
+            category: .display
+        )
+    }
+
+    private func installCandidateBarRow() {
+        // The arranged row obeys the key margins. Only its ordinary child extends to the surface;
+        // UIStackView therefore never has to contain an oversized arrangedSubview.
+        let row = CandidateBarRowView(header: candidateBar)
+        rootStack.addArrangedSubview(row)
+        rootStack.setCustomSpacing(0, after: row)
+        NSLayoutConstraint.activate([
+            candidateBar.leadingAnchor.constraint(equalTo: keyboardSurfaceView.leadingAnchor),
+            candidateBar.trailingAnchor.constraint(equalTo: keyboardSurfaceView.trailingAnchor),
+        ])
+    }
+
+    func reloadKeyboard() {
+        isCandidateExpanded = false
+        isPinyinPathExpanded = false
+        candidateExpandedPanel?.removeFromSuperview()
+        candidateExpandedPanel = nil
+        pinyinPathExpandedPanel?.removeFromSuperview()
+        pinyinPathExpandedPanel = nil
+        pinyinPathCollectionView = nil
+        t9PinyinPathBarView = nil
+        candidateCollectionView = nil
+        expandedPanelScrollView = nil
+        expandedCandidateCollectionView = nil
+        candidateCellSizeCache.removeAll(keepingCapacity: true)
+        rootStack.alpha = 1
+        rootStack.isHidden = false
+        rootStack.isUserInteractionEnabled = true
+        clearAllRows()
+        if shouldReserveT9PinyinPathBar {
+            let pathBar = makeT9PinyinPathBar()
+            rootStack.addArrangedSubview(pathBar)
+            rootStack.setCustomSpacing(0, after: pathBar)
+        }
+        candidateBar = makeCandidateBar()
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            // Construction refreshes the old bar; bind the new bar before updating its probe.
+            refreshWakeOwnerProbeControls()
+        #endif
+        installCandidateBarRow()
+        addKeyboardRows(for: controller.state)
+        updateReturnKeyAppearance()
+        updateSelectPinyinButtonAvailability()
+        installPreferredKeyboardHeight()
+        Logger.shared.debug(
+            "reloadKeyboard: candidateBar=\(candidateBar != nil ? "OK" : "nil"), rows=\(rootStack.arrangedSubviews.count)",
+            category: .display
+        )
+        #if DEBUG
+            applyDebugKeyHitboxOverlaySetting()
+        #endif
+    }
+
+    func installKeyboardUIIfNeeded() {
+        guard !isKeyboardHeightManaged || resolveKeyboardRowHeight(pathHeight: presentedT9PinyinPathBarHeight) else {
+            return
+        }
+        guard !isKeyboardUIInstalled else { return }
+        isKeyboardUIInstalled = true
+        view.backgroundColor = .clear
+        setupRootStack()
+        UIView.performWithoutAnimation {
+            reloadKeyboard()
+            view.layoutIfNeeded()
+        }
+        if isKeyboardHeightManaged { view.alpha = 1 }
+        Logger.shared.debug("installKeyboardUI: systemBounds=\(view.bounds)", category: .display)
+        Logger.shared.requestFlush()
+    }
+
+    func reloadKeyboardContent(with precomputedCandidates: [CandidateItem]? = nil) {
+        candidateCellSizeCache.removeAll(keepingCapacity: true)
+        clearAllRows()
+        if isCandidateExpanded {
+            let panel = makeExpandedCandidatePanel(with: precomputedCandidates)
+            rootStack.addArrangedSubview(panel)
+            candidateExpandedPanel = panel
+        } else if isPinyinPathExpanded {
+            if shouldReserveT9PinyinPathBar {
+                let pathBar = makeT9PinyinPathBar()
+                rootStack.addArrangedSubview(pathBar)
+                rootStack.setCustomSpacing(0, after: pathBar)
+            }
+            candidateBar = makeCandidateBar()
+            #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+                // Construction refreshes the old bar; bind the new bar before updating its probe.
+                refreshWakeOwnerProbeControls()
+            #endif
+            installCandidateBarRow()
+            let panel = makePinyinPathExpandedPanel()
+            rootStack.addArrangedSubview(panel)
+            pinyinPathExpandedPanel = panel
+        } else {
+            if shouldReserveT9PinyinPathBar {
+                let pathBar = makeT9PinyinPathBar()
+                rootStack.addArrangedSubview(pathBar)
+                rootStack.setCustomSpacing(0, after: pathBar)
+            }
+            candidateBar = makeCandidateBar()
+            #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+                // Construction refreshes the old bar; bind the new bar before updating its probe.
+                refreshWakeOwnerProbeControls()
+            #endif
+            installCandidateBarRow()
+            addKeyboardRows(for: controller.state)
+        }
+        updateSelectPinyinButtonAvailability()
+        installPreferredKeyboardHeight()
+    }
+
+    func addKeyboardRows(for state: KeyboardState) {
+        letterButtons.removeAll()
+        #if T9_AUTO_ANCHOR_DEVICE_PREFLIGHT
+            devicePreflightT9LetterGroupButtons.removeAll()
+            devicePreflightPreparedGeometryDigest = nil
+            devicePreflightDidRecordExecutionGeometry = false
+        #endif
+        candidateExpandedPanel = nil
+        expandedPanelScrollView = nil
+        switch state.currentPage {
+        case .letters:
+            let usesT9Chrome =
+                state.inputMode == .chinese
+                && cachedLayoutStyle == .nineKey
+                && cachedT9ReadinessMatched
+            if usesT9Chrome {
+                // Single host: left 4-col pad + right delete/reinput/tall return.
+                for view in makeT9NineKeyChrome() {
+                    rootStack.addArrangedSubview(view)
+                }
+            } else {
+                rootStack.addArrangedSubview(makeLetterRow(["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"]))
+                rootStack.addArrangedSubview(
+                    makeLetterRow(["a", "s", "d", "f", "g", "h", "j", "k", "l"], horizontalInset: 18)
+                )
+                let thirdRow = makeLetterThirdRow()
+                rootStack.addArrangedSubview(thirdRow)
+                rootStack.setCustomSpacing(keyboardGroupSpacing, after: thirdRow)
+                rootStack.addArrangedSubview(makeBottomRow(pageSwitchTitle: pageSwitchTitle, includeDelete: false))
+            }
+        case .numbers:
+            rootStack.addArrangedSubview(makeTextRow(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]))
+            if state.inputMode == .chinese {
+                rootStack.addArrangedSubview(makeTextRow(["-", "/", "：", "；", "（", "）", "¥", "@", "“", "”"]))
+                let thirdRow = makeChineseNumbersThirdRow()
+                rootStack.addArrangedSubview(thirdRow)
+                rootStack.setCustomSpacing(keyboardGroupSpacing, after: thirdRow)
+                rootStack.addArrangedSubview(makeSymbolicBottomRow(languageTitle: "拼音"))
+            } else {
+                rootStack.addArrangedSubview(
+                    makeTextRow(
+                        ["-", "/", ":", ";", "(", ")", "$", "&", "@", "”"],
+                        actionOverrides: [
+                            "”": #selector(insertSmartDoubleQuote(_:))
+                        ]))
+                let thirdRow = makeEnglishNumbersThirdRow()
+                rootStack.addArrangedSubview(thirdRow)
+                rootStack.setCustomSpacing(keyboardGroupSpacing, after: thirdRow)
+                rootStack.addArrangedSubview(makeSymbolicBottomRow(languageTitle: "English"))
+            }
+        case .symbols:
+            if state.inputMode == .chinese {
+                rootStack.addArrangedSubview(makeTextRow(["【", "】", "｛", "｝", "#", "%", "^", "*", "+", "="]))
+                rootStack.addArrangedSubview(makeTextRow(["_", "—", "\\", "｜", "～", "《", "》", "$", "&", "·"]))
+                let thirdRow = makeChineseSymbolsThirdRow()
+                rootStack.addArrangedSubview(thirdRow)
+                rootStack.setCustomSpacing(keyboardGroupSpacing, after: thirdRow)
+                rootStack.addArrangedSubview(makeSymbolicBottomRow(languageTitle: "拼音"))
+            } else {
+                rootStack.addArrangedSubview(makeTextRow(["[", "]", "{", "}", "#", "%", "^", "*", "+", "="]))
+                rootStack.addArrangedSubview(makeTextRow(["_", "\\", "|", "~", "<", ">", "€", "£", "¥", "•"]))
+                let thirdRow = makeEnglishSymbolsThirdRow()
+                rootStack.addArrangedSubview(thirdRow)
+                rootStack.setCustomSpacing(keyboardGroupSpacing, after: thirdRow)
+                rootStack.addArrangedSubview(makeSymbolicBottomRow(languageTitle: "English"))
+            }
+        case .emoji:
+            rootStack.addArrangedSubview(makeEmojiPage())
+            rootStack.addArrangedSubview(makeBottomRow(pageSwitchTitle: pageSwitchTitle, includeDelete: true))
+        }
+    }
+
+    func clearAllRows() {
+        candidateCellSizeCache.removeAll(keepingCapacity: true)
+        (rootStack as? KeyboardInputHitAreaStackView)?.invalidateKeyTouchGeometry()
+        for view in rootStack.arrangedSubviews {
+            rootStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        expandedPanelScrollView = nil
+        expandedCandidateCollectionView = nil
+    }
+
+    func removeContentRows() {
+        var foundBar = false
+        for view in rootStack.arrangedSubviews {
+            if view === candidateBar {
+                foundBar = true
+                continue
+            }
+            if foundBar {
+                rootStack.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+        }
+    }
+
+    func syncUI(with effects: KeyboardEffect) {
+        // Refresh last so normal presentation cannot re-enable recovery-blocked controls.
+        defer { refreshT9InputRecoveryPresentation() }
+        #if DEBUG
+            let startTime = CACurrentMediaTime()
+            defer { logKeyPerformance("syncUI \(effects)", startTime: startTime) }
+        #endif
+        updateReturnKeyAppearance()
+        if effects.contains(.pageChanged) || effects.contains(.inputModeChanged)
+            || effects.contains(.keyboardTypeChanged)
+        {
+            if effects.refreshesCandidatePresentation {
+                resetCandidateSnapshotFromController()
+            }
+            if hasViewAppeared {
+                reloadKeyboard()
+            } else {
+                UIView.performWithoutAnimation { reloadKeyboard() }
+            }
+            return
+        }
+        if effects.refreshesCandidatePresentation {
+            if shouldPublishAtomicT9Presentation {
+                // One Core snapshot feeds candidates + Path + panel for this revision.
+                refreshT9PresentationFromCoreSnapshot()
+            } else {
+                refreshCandidateBar()
+                refreshT9PinyinPathBar()
+            }
+            scheduleContextualTypoCorrectionRefresh()
+            if isPinyinPathExpanded {
+                let stillComposing = T9CompositionCommitPolicy.isActiveT9Composition(
+                    usesT9InputSemantics: controller.usesT9InputSemantics,
+                    rawInput: controller.state.lastRimeOutput?.rawInput
+                )
+                if !stillComposing {
+                    dismissPinyinPathExpandedPanel(animated: false)
+                } else if !shouldPublishAtomicT9Presentation {
+                    refreshPinyinPathExpandedPanel()
+                }
+            }
+        } else if effects.contains(.t9PinyinPathsChanged) {
+            if shouldPublishAtomicT9Presentation {
+                refreshT9PresentationFromCoreSnapshot()
+            } else {
+                refreshT9PinyinPathBar()
+            }
+        }
+        if effects.contains(.shiftStateChanged) {
+            refreshLetterButtons()
+            updateShiftButtonAppearance()
+        }
+    }
+}

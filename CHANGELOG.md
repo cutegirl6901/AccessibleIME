@@ -1,0 +1,1610 @@
+# CHANGELOG
+
+## 2026-10-28 — B34 候选上屏打点（本地交付，未发布）
+
+- 键盘出现时若诊断与“显示”类别均已开启，此后键盘可为候选选择记录不含文字内容的 `candidate.commit_trace` 事件（被拦截的选择仅可能计入尚未到期且已打开的记录；记录和事件可能因关闭开关、进程结束、日志暂停、队列已满或其他写入条件而缺失）：各类宿主写入次数、宿主回调次数、被拦截的选择次数、上屏文字重复出现次数的取样、关闭原因与耗时，用于排查重复上屏（B34）。读法见 [DEBUGGING](docs/DEBUGGING.md)。
+- 这些字段是线索，不证明根因；真实宿主、真机和不同宿主之间的差异均未验证。证据仅限本地 Core、扩展与模拟器 Debug/Release 测试，不代表托管 CI 或 Release 通过。
+
+## 2026-10-27 — 1.0 (177) 外部 TestFlight
+
+- #244 键盘高度不再把过渡高度当预算；#247 触区快照和 canvas 跟随当前几何；#248 九宫格始终预留 34pt 拼音栏；#249「实验性 Liquid Glass 材质」仅 DEBUG 可见，正式构建在主 App 启动时清除存储值。Human 决定将 1.0 (177) 发给外部测试组，详见[发布决定](docs/product-decisions/RELEASE-2026-10-27-BUILD177-external-testflight-decision.md)。
+
+## 2026-10-24 — UI-3 候选字大小（本地交付，未发布）
+
+- 主 App键盘布局页新增“候选字大小”，含只读候选预览、13–22十档滑杆、默认标记与搜索入口；预览和键盘渲染/测量共用同一字号物化文件。
+- 17档保留候选17 / 组字15的独立系统缩放、各封顶28；其它档固定n/n−2。主 App写App Group整数，选17删键；键盘下次出现前采用。
+- 证据仅限本地Core、页面/搜索/布局测试和Debug/Release模拟器门禁及临时变异检查，具体结果见外置Executor报告；不代表托管CI、独立评审、merge或Release通过。
+- Human真机、完全访问关闭时端到端是否生效、22档最长候选可用性、系统“更大字体”的真机表现均未验证；不含P5、push、PR、merge、TestFlight或真机构建。
+
+- P7 追溯补充：设置页预览按 Human 要求改为“拼音一行、候选一行”的示意样式（P6 修订1b，`0db9b27`）；真实候选条里拼音仍是同一条内的一个项。上方未验证描述保留为 P4 交付时的证据快照。
+- 2026-10-24 Human 真机记录：iPhone 13 Pro / iOS 27.0.1、被测提交 `b0e0361`，清单全部通过，完全访问关与开表现无区别——**Human 观察，不是测量**；Debug/Release 构建类型未知，不写成普遍保证。
+- 后续预览提交 `eae739e`、`0db9b27` 未经真机验收；该 Human 记录不覆盖后续提交，不代表完整 CI、merge 或 Release 通过。
+
+## 2026-10-24 — UI-4 行高设置与评审修订（本地交付，未发布）
+
+- 主App提供键盘高度入口与不可见输入承载，调节在真实键盘内进行；扩展私有保存，拖动只更新待定值、松手应用预览、确定才保存，重置确定时删除保存值。
+- 默认行高45、无路径总高254/含路径288保持；按方向与实际预算夹取，不隐式写回。旋转完成后条件性提升根高度请求750→999，并在下一旋转、消失、约束替换、窗口移除及宿主suspend时还原；已消费页面标记FIFO保留最近64个。
+- 证据层级：已有本地Core/布局/页面测试、Debug/Release模拟器构建及Human iPhone13Pro单机观察；Human总体通过不是测量，Release真机配置/版本/安装时间未独立核验。
+- 已知限制：预算不足四行40pt时整面隐藏；999不保证识别求解前宿主软预算；真实低预算/分屏/浮动未独立验证；竖屏最大占比与是否含系统底栏仍UNKNOWN（Human已接受待测），端点震动来源UNKNOWN且已接受；64条之外旧标记不承诺去重。
+- 仅本地交付记录，不代表托管CI、独立Round2、merge或Release通过；本轮不push、PR、merge或TestFlight。详见[数值与限制](docs/KEYBOARD_VALUES.md)。
+
+## 2026-10-20 — UI-1 × UI-2 受控本地集成（未推送，待独立复核）
+
+- 修复已复现的动态路径行展开后面板遮罩坐标过期：在根布局及转场结束同步，坐标变化时移除旧遮罩插值。
+- 统一一个Controller集成测试Target，保留双方测试；普通候选46pt，T9路径初始0pt、Sticky34pt，整体请求254/288pt。
+- 保留Continuous Candidate Surface、阅读锚点、42pt展开行、56×46pt操作区及Sticky/750高度机制；真实集成后的动态高度与动画仍需Human复验。
+- 以下同日条目保留各自开发阶段的历史发布/验收边界；本次不Push、更新PR或发布TestFlight。
+
+## 2026-10-20 — 九宫格按需拼音行（本地候选，真实宿主待验收）
+
+- 中文九宫格在可确认的新呈现周期空闲时从0pt开始；首次组字/Path/Partial Commit或Recovery触发展开34pt，此后上屏、删空和刷新均保持展开。仅明确结束且脱离window后的下一次呈现可复位；不明确时保守保留。
+- 复用既有750柔性根高度请求，保留当前46pt候选容器与按键尺寸；收起关闭Path命中和AX，展开在实际viewport下刷新路径布局。
+- 仅本地实现/进程内UIKit证据；未推送产品、未合并、未发布TestFlight，不代表真实Extension屏幕稳定性或Product Gate。
+## 2026-10-20 — Continuous Candidate Surface（仅本地，待真机复验）
+
+- 现有横向/纵向候选列表共享原有候选顺序与分页；新增UI-only阅读锚点，支持部分可见候选、展开后前后浏览、未拖动原偏移恢复及拖动后阅读位置回传。
+- 快照/布局身份变化或候选不匹配时确定性回退；不改Core、RIME、候选权限及native select。
+- 展开层复用实际键盘surface，按揭示范围遮住下层按键，固定收起按钮使用局部材质及降低透明度兜底；沿用46/56/22pt、42pt流式行高和独立34pt拼音区域。
+- 局部裁剪揭示/反向收拢保持根高度与Cell排版不动，过渡期间隔离触控及快速重复切换；真实动画/材质/VoiceOver仍待Human验收。本轮未push或更新PR216，未修改UI-2。
+
+## 2026-10-20 — UI-1 设备反馈视觉收尾（仅本地，待复验）
+
+- 空闲关闭按钮不再显示独立灰色底块；移除操作区重复 tint/渐变叠层中的装饰渐变，保留候选模式材质与裁剪。
+- 展开/收起复用相同22pt符号和custom按钮渲染；展开面板从原候选栏位置开始，保留上方真实T9路径内容及触控，并仅裁切面板自身顶部圆角。
+- 26键进程内测量仅见原2pt顶部间距和46pt固定候选行；不擅自删除候选行或改变键盘高度、按键尺寸。真机外观和宿主留白仍需复验。
+- PR #216已有版本保持不变；本轮修改未push，不涉及UI-2 #217。
+
+## 2026-10-20 — Compact Candidate Header（本地 UI-1 候选，待独立 Review）
+
+- 26键与九键共用46pt总候选行；局部Semantic UI Tokens统一容器、Cell、56pt操作区和22pt图标参数，不再叠加旧14pt。
+- 候选viewport裁剪绘制，操作区贴完整右边且命中不侵入候选；保留展开/关闭双模式、滚动分页与恢复阻断。
+- 操作区复用系统材质与语义底色；减少透明度使用不透明兜底，恢复提示隐藏操作层。展开动画避免降低材质祖先alpha。
+- 历史UI-1阶段：UI-2的T9动态0/34pt试验因缺少真实Extension证据撤回，当时保留固定34pt；本次集成已由上方0/34pt Sticky合同取代。
+- [验证与限制](docs/evidence/keyboard-compact-header-001/verification.md)；无产品push/PR/merge/TestFlight，不代表Quality或Product Gate通过。
+
+## 2026-10-19 — Input Reliability Batch 3（本地候选，待独立 Review）
+
+- 九键短删除保留已呈现的未确认拼音历史；连续重输入维持数字槽位与 Path 一致，不伪造用户确认。
+- affine Partial Commit checkpoint 恢复失败后保留已选前缀，撤销候选/分页权限；删除取消未确认尾段，新中文键只允许一次 fresh 恢复。
+- 恢复提示占用现有候选行，阻断失效候选、Path、展开与提交控件；相关终结路径防止内部 T9 数字上屏。
+- R174 精确补回实现仅保留受控内部测试入口，正常 Debug/Release 默认关闭；不代表 TestFlight、Release 或可合并。
+
+## 2026-10-11 — TYPO-CORRECTION-002 有界父任务收尾（本地记录，待发布）
+
+- 独立最终证据复核完整通过；按Human条件授权记录有界Product Gate并Closed。P1技术债、QA人工观察边界与整体性能未知保留；不表示Release。
+
+## 2026-10-11 — F-01 部署身份守卫固定基线整合（已合并 #139）
+
+- 主 App 部署成功要求可用librime身份；nil、空白与`(no api)`/`(unknown)`保持待部署，正常版本与已有runtime smoke继续保留。
+- 保留旧PR139祖先关系整合固定main；五源完整本地CI与一次独立增量复核通过。PR139已于2026-10-11合并为 `9355200`；不表示Release或父任务Gate/Close。
+- INT003工具已由PR207合并`8f306c6`；下方待发布条目保留其当时的历史状态。父任务仍Active。
+
+## 2026-10-11 — INT003 查询成本 DEBUG 工具与验证收敛（待发布候选）
+
+- 加入默认关闭的有限成本探针、真实route scope、序列边界、freeze快照及时间锚点；不增加Release持久化日志或Extension部署。
+- 协调器和probe使用hostless Extension测试；Swift格式检查覆盖ExtensionTests，保留main现有模拟器准备和生命周期恢复逻辑。
+- 固定main5927233整合候选完成完整本地CI与DEBUG52回归；P2仅接受有界provider计数/elapsed，整体性能未知保留，父Active。
+- [复用说明](docs/debugging/int003-query-cost-probe-reuse.md)。尚未commit/push/merge，不代表Release或父Gate/Close。
+
+
+## 2026-10-07 — 删除键可滑动擦除并清空光标前文字
+
+- 点按删除一次。长按 0.5 秒后按 0.08 秒重复，大约再 0.15 秒出现垃圾桶。
+- 左右滑动按字素擦除，滑回可回放。正在组字时向左滑，放弃剩余组字。
+- 手指进入垃圾桶再松手，清空光标前已经能看见的文字。iOS 26 用浅红色玻璃，更低版本用随外观变化的模糊。
+- 发声仍用现有按键音和触感：按下一次；之后每删一个字一次按键音，触感每四个字一次；进入垃圾桶时一次较重的确认。
+- 设置 → 输入体验 → 删除键：长按垃圾桶、滑动擦除、组字时左滑，默认都开。点按和长按重复不能关。
+
+## 2026-09-28 — 空闲候选栏可关闭键盘
+
+- 候选栏右侧键在没有可展开内容时显示带圈向下箭头，点按请求收起键盘。
+- 有候选、组字、联想或待选符号时仍为展开；下滑展开只在展开模式生效。
+- 空闲关闭键改为 template 图标，去掉 `UIButton.Configuration` 在玻璃上叠出的白底。
+
+## 2026-09-28 — 主 App 增加关于页
+
+- 设置「App 设置」末行增加「关于」：展示版本与 Build，提供邮件和小红书联系入口。
+- 「隐私与数据」「开源软件与内容」改从关于页进入；设置根列表只保留外观、通知和关于。
+- 关于页只读当前安装包的营销版本与构建号；本地 Debug 显示 `1.0 (1)` 符合工程默认。公测/正式版数字由当次上传包决定，规则写在发布清单。
+
+## 2026-09-28 — 主 App 操作按钮整块可点
+
+- 共享 `AppActionButton` 的命中区域改为整块可见胶囊（含玻璃空白与内边距），不再只响应标题字形。
+- 命中形状与现有 16 pt 连续圆角对齐；对比度、Liquid Glass 和按钮语义不变。
+
+## 2026-09-25 — 环境采集中的设备发现诊断分层
+
+- Environment Capture Procedure 升至 `1.1.0`：分别记录 `devicectl`、`simctl`、Device Hub、Accessibility Inspector 与 XCTest/XCUITest 结果；目标模拟器操作使用当次发现的显式 UDID，并按具体失败操作记录状态和耗时。
+- 独立 Architecture review 为 **Pass**，Human Product Owner 已接受发布。此项是 docs-only 发布候选；在合并到默认分支前，已发布流程仍为 `1.0.0`。
+
+## 2026-09-23 — 键盘字母与标点字号微调
+
+- 英文字母、标点字符及九键字母组字号从 `16 pt` 调整为 `17 pt`，回应公测用户反馈偏小的问题；按键尺寸和布局不变。
+
+## 2026-09-23 — 第三方方案下载改为许可 sheet 单按钮
+
+- 首次下载入口统一为「查看许可并下载」；许可证 sheet 底部「同意并下载」才开始下载并部署。
+- 覆盖设置方案详情卡片、启用引导准备资源，以及九键安装弹出的同一 sheet。已安装管理网格不变。
+
+## 2026-09-23 — 主 App 操作按钮深浅色对比度
+
+- 共享 `AppActionButton` 的可点击 primary 改为浅色黑底白字、深色白底黑字；iOS 26 保留 Liquid Glass（Reduce Transparency 时走实心 fallback）。
+- Secondary 用近无 tint 的玻璃板；destructive 保持语义红；disabled 沿用同一颜色对并整体 40% 透明。
+- 独立 Quality 为 **Pass with conditions**；Human Product Gate 已接受既有残差与 Human-attested 目视。隔离分支实现 commit `ab98e346d8cca67f2c77287e7ebb6516f4483160`；push / Release 仍未授权。
+## 2026-09-24 — RIME-SYNC-001 当前闭环范围限于本地文件夹
+
+- Human Product Owner 将当前 iOS V1 收尾验证限定为 local-folder 路径；已实现的 WebDAV 功能保留，但 live-server 验证延期至 `TD-019`，CloudKit 与跨平台债务边界不变。
+- 授权在 iPhone 18 Pro / iOS 27.0 Simulator 创建隔离同步目录并进行本地路径验证；该工作不证明实体设备、iCloud/第三方文件提供器传播或 live WebDAV 行为。
+
+## 2026-09-23 — RIME 同步诊断错误码隐私边界
+
+- 同步诊断改用有限、稳定的错误码映射；不再输出任意 NSError domain/code 或底层错误文本，未知错误映射为 `unknown`。
+- 增加错误码映射回归测试并更新 RIME 同步诊断合同；不改变同步行为或产品范围。
+
+## 2026-09-19 — 键盘按键可被 Simulator AX 独立发现并走 UIKit 路径
+
+- Keyboard 按键显式作为独立无障碍元素（`.keyboardKey`）；全幅 touch-routing overlay 不再占用 AX 空间，hit-routing 与 Debug overlay 绘制路径保持分离。
+- Simulator 上字母键、删除、空格、回车、键盘页面、输入语言可作为独立 Key 被 harness 发现；字母/删除经现有 target-action 触发。
+- Product 接受 F-01/F-02 为有界 Pass；缝区、九键、真机 VoiceOver 不纳入本切片。不构成 INT-003、QA-001、性能、parent Close 或 Release 结论。
+
+## 2026-09-15 — CI full 路径拆成并行 heavy jobs
+
+- `Swift 6 Quality` 在 `full` 分类下不再串行一个 `build-and-test`。改为并行 `format-swift`、`test-keyboardcore`、`test-rimebridge`、`test-app-keyboard`、`build-release`。
+- Debug `test` 之后不再追加 Debug `build`。`docs_only` / `full` 分类与 fail-closed 规则不变，没有按 UI/Rime 路径跳过。
+- `final-quality-gate` 要求 `full` 时五条 heavy 全 success，`docs_only` 时五条全 skipped。
+
+## 2026-09-15 — 主 App 开关深色开启态对比度
+
+- 全部主 App 开关改走共享 `AppSwitch`（系统 `UISwitch` + `AppSwitchChrome`）。浅色开启黑槽白点；深色开启白槽黑点；关闭态小圆点保持白色。
+- 独立 Quality 结论为 **Pass with conditions**，新 SHA 增量核对完成；App + Keyboard Debug 测试为 `UniverseKeyboardTests 361 / 9 skipped`、`KeyboardTests 11`，历史记录的测试计数已校正。实现 SHA 为 `5d3880b13109a65b8e441ded74b82f9927ffb9b4`；Product Gate 已另行记录，push 或 Release 仍未授权。
+- Human Product Owner 在 iPhone 13 Pro / iOS 27 完成设置首页、诊断页、模糊音 Form 的四态观察，详见 [`Human-attested record`](docs/evidence/app-switch-contrast-001-human-attested-observation-2026-09-15.md)；该观察非 Device-attested，Gate 接受范围见下方 Product Gate 记录。
+
+## 2026-09-15 — APP-SWITCH-CONTRAST-001 Human Product Gate
+
+- Human Product Owner 接受主 App 开关对比度 Product Gate 及既有 Quality 条件；Assignment `APP-SWITCH-CONTRAST-001` 已关闭。
+- 本 Gate 只关闭主 App 开关对比度产品验收；不升级为 Device-attested，不授权 push、PR、merge、TestFlight、App Store Connect 或 Release。
+
+## 2026-09-14 — 首次启用改为设置「？」与引导 sheet
+
+- 产品记录 `PD-HELP-GUIDE-SHEET-001`：未完成或恢复时设置「？」带标记，并在下次主 App 进程启动自动弹出引导 sheet；「稍后再说」只结束本次进程中的 sheet；设置列表帮助行删除。
+- 主 App 已去掉条件帮助 Tab；J4 试用框在 sheet 内；已完成说明书可「从第一步开始」重看且不清进度。Product Gate 已通过；本条随有界 commit 入库。
+
+## 2026-09-12 — 方案详情用来源弹层收纳版本与下载来源
+
+- 方案详情页的「方案信息」整块可点，右上中性 `info.circle` 提示；底部 sheet 只显示版本与下载来源。
+- 内置与可下载方案共用同一套行；内置填「随 App 内置 / 不适用」。以后目录里新增第三方方案自动适用，不按 schema ID 特判。
+
+## 2026-09-12 — Parked-branch archive hygiene Closed
+
+- `GIT-BRANCH-ARCHIVE-HYGIENE-003` engineering Close after PR #120; the parked-branch plan is Archived. Group B local names remain. Unique commits were not merged to `main`.
+
+## 2026-09-11 — Group B local branch names kept
+
+- After archive tags landed, KOS keep disposition left `codex/wanxiang-p4-closure-001`, `codex/release-2026-0801-kaomoji`, and `codex/release-2026-08-01-coordination-next` in place. Unique commits were not merged to `main` and were not deleted.
+
+## 2026-09-11 — Group B parked-branch archive tags
+
+- Local-only tips `codex/wanxiang-p4-closure-001`, `codex/release-2026-0801-kaomoji`, and `codex/release-2026-08-01-coordination-next` now also live behind annotated `archive/…/20260911` tags on `origin`. Branch names were **not** deleted. Unique commits were not merged to `main`.
+
+## 2026-09-11 — Group A parked-branch archive tags
+
+- Closed/superseded branches `codex/kos-v080-upgrade-review`, `codex/td016-docs-only-fixture`, and `docs/t9-single-key-mixed-candidates-discussion` now live behind annotated `archive/…/20260911` tags; the branch names were deleted. Unique commits were not merged to `main`. Group B / #101 / #102 were not touched.
+
+## 2026-09-11 — 部署中断后可取消并重试
+
+- 主 App 不再把残留的 `rime_deploying` 恢复成无法操作的「正在部署…」。进程被结束后，该标志视为中断失败，抑制自动重试，并保留手动「应用并重新部署」。
+- 部署进行中可以取消；取消不会让已失效的部署结果覆盖后续重试。不改变非活动卸载的 CS-05 路由合同。
+- Human-attested：覆盖安装后首次打开为部署失败且可重试。非活动卸载后的前台自动部署记为 [`TD-018`](docs/TECH_DEBT.md#td-018-foreground-auto-deploy-after-inactive-scheme-uninstall)，本片不做。
+
+## 2026-09-08 — Cross-scheme CS-03/CS-04 (local)
+
+- Identical-receipt idempotent no-op for scheme reinstall (`SchemaManager.shouldSkipIdenticalReinstall`; force bypass).
+- Dual-install harness evidence: CS-03 Ice repeat no-op; CS-04 Wanxiang repeat no-op + identity-change upgrade preserves Ice.
+- Docs/handoff updated; **not pushed**; PR #100 remains draft.
+
+## 2026-09-08 — 卸载回滚再次失败时保留恢复文件
+
+- 回滚移动失败时保留暂存目录并报告恢复未完成，避免清理唯一剩余文件副本。
+- 主 App 停止该次卸载，不重新部署不完整的原方案；增加双重移动失败及恢复重试测试。此前有限 Gate 不自动覆盖本次增量。
+
+## 2026-09-08 — Wanxiang Lua 精确哈希归属暂存（17.5.9）
+
+- 为 pinned CNB Wanxiang 17.5.9 增加 `WanxiangLuaOwnership` 与卸载时 exact-hash Lua 路径匹配暂存。
+- 共存测试覆盖匹配/修改/未知路径/符号链接/Ice 不误伤；**非**完整 Wanxiang P4 闭合。
+- 有限 Product Gate 文档仍为先前冻结的历史记录，不自动接受 rollback 修正后的实现，除非原文已写明。
+
+## 2026-09-08 — Limited P4 Product Gate（自动化覆盖失败回滚）
+
+- Human 有限 Product Gate：接受失败回滚未真机测，由单元测试 + Q-P2-01 mid-move 注入 + CI 覆盖本片残留风险。
+- 等级：**Limited Product Gate Passed (automation-backed failure rollback)**；非完整 Product Gate / 非 Device-attested。
+- 明确未授权：undraft/merge PR #100、TestFlight、App Release、ADR 0034 Accepted、Wanxiang P4 闭合。
+
+## 2026-09-07 — Human-attested P4 活跃卸载烟雾
+
+- Human 报告：活跃雾凇卸载先切 Luna、无报错、之后 Luna 可输入，设置显示雾凇未安装；失败回滚未测。
+- 证据等级 Human-attested ONLY，不是 Device-attested / Product Gate / ADR Accepted / merge / TestFlight。
+
+## 2026-09-07 — P4 活跃方案卸载 fail-closed
+
+- 卸载当前活跃已下载方案时，先切换并完成内置 `luna_pinyin` 部署，再 stage→commit 删除目标文件；任一步失败保留原方案选择与文件。
+- 不把 `switchToSchema` 的延迟部署当作成功。ADR 0034 仍 Proposed；未宣称 Wanxiang P4 或真机 Product Gate 完成。
+
+## 2026-09-07 — 已知污染恢复加入统一事务回滚
+
+- 将 P3 `default.yaml` 已知污染恢复纳入内置资源安装的同一 mutation 账本，并使用每次操作独立的 backup root。
+- 后续资源安装或 overlay 写入失败会恢复事务前字节与旧回执；存在但不可读的资源回执会在任何运行时修改前 fail-closed。
+- 新增失败注入与真实归档引用闭合测试。Architecture delta 复审关闭原事务阻断，ADR 0034 仍 Proposed。
+
+## 2026-09-07 — Human-attested 雾凇重下与 Luna 切换
+
+- Human 报告：隔离工程 P3 构建上重下雾凇可部署，切换 Luna 不报错，双方可输入。
+- 证据等级 Human-attested，不是 Device-attested / Product Gate；ADR 0034 仍 Proposed。
+
+## 2026-09-07 — 已知雾凇 Prelude 污染的有界恢复
+
+- 仅当共享 `default.yaml` 匹配钉住的雾凇 2026.06.30 SHA 时，从已校验的官方源恢复。
+- 未知改动仍 fail-closed；成功后删除恢复备份。不整目录删除、不放宽 receipt。
+
+## 2026-09-07 — 雾凇独立预设，禁止覆盖 Prelude `default.yaml`
+
+- 雾凇安装改为 `rime_ice_preset.yaml`，并改写 schema 引用；共享 `default.yaml` 保持官方 Prelude 字节。
+- 卸载按文件删除雾凇 `lua` 与 `opencc/emoji*`，不删除整个 `lua/` 或 `opencc/`。万象仍跳过自带 `default.yaml`。
+
+## 2026-09-07 — P1 多方案资源归属清单
+
+- 记录内置与雾凇 admitted 集合：同名不同字节目前只有 `default.yaml`；Ice/T9 仍引用该文件。
+- 雾凇卸载不收回 `lua/`、`opencc/`、`default.yaml`。不接受 ADR 0034，不开始 P2。
+
+## 2026-09-07 — P0 Ice/builtin `default.yaml` 冲突复现
+
+- 生产雾凇安装计划会覆盖 Prelude `default.yaml`；存在 builtin receipt 时再次 `install()` 抛 `byteCountMismatch`，且不回滚已覆盖文件。
+- 仅增加安装器容器根测试接缝；不放宽完整性校验，不进入恢复实现。
+
+## 2026-09-07 — 多方案资源归属计划（docs-only）
+
+- 在 `SCHEME-DELIVERY-SOURCE-STATE-001` 记录共存/部署恢复规划，并新增 Proposed ADR 0034。
+- 事实、方案建议和待批准决策分开；不授权实现、真机恢复、ADR 接受或 PR #100 merge。
+
+## Scheme download source and failure-state repair
+
+- Pin Rime Ice to verified 2026.06.30 archives instead of the mutable nightly alias; retain archive and staged-content integrity checks.
+- Distinguish changed remote content from source availability failures and record finite per-source probe reasons.
+- Scope failure display/retry by scheme ID so Rime Ice errors do not appear on Wanxiang details.
+
+
+## KOS v0.7.0 adoption (PR #99)
+
+- Pin released Kit v0.7.0 with advisory mode; adopt optional execution hygiene for new tasks, preserving existing Active baselines.
+- Local strict test/build gates passed on Xcode 27 beta + iOS 26.5; earlier host/runtime failures retained in evidence.
+
+
+Change history for Universe Keyboard. Entries are in reverse chronological order.
+
+## Unreleased — KOS execution and instruction repair
+
+- Human Product Owner 正式采纳 ADR 0035（Accepted，Conditional Accept package），将发布证据增量与 Beta → external promotion 作为有界架构合同；不改变 Product、Quality、Release 或外部动作授权。
+- 新增发布证据增量计划与 Candidate receipt：普通小改动只刷新受影响证据，
+  键盘/RIME/工具链/权限等边界自动扩大验证范围；日常 Beta 证据可按产物身份
+  标记为当前证明或仅作 comparator，不自动替代 Quality、Product 或 Release 门禁。
+- 主 App Diagnostics 新增「发布证据」页面，保存有限的候选身份、验证档位、
+  阶段结果与 Beta→正式外部候选引用；不记录用户输入内容，也不执行上传或分发。
+- 收紧 Beta→外部候选证据晋级：待核对产物不会形成通过，current-proof 必须绑定
+  五字段 artifact identity、行为契约、验证档位、设备/系统、候选上下文、证据版本和
+  freshness；首次/后续 external receipt 分别强制 verified baseline / previous receipt。
+- 发布证据 archive 损坏时保留 quarantine 副本后恢复保存，步骤备注有界，并以自动化
+  测试确认诊断日志清除不会删除 release-evidence 子空间。
+- 修正测试/发布技能、当前授权解释和阶段依赖；保留必填 UNKNOWN、独立评审与本地 CI 门。
+- 压缩入口历史摘要，修正 legacy 路由、九键状态和 App Tab 描述；标记过期文档健康基线。
+- 上游 v0.7.0 准备中；本项目 Adopted 仍 v0.6.0 advisory，未迁移既有 Active Assignment。
+
+## 2026-09-04 — 首次安装自动部署与模糊音默认关合入 `main`
+
+- PR [#98](https://github.com/shchnk1103/Universe-Keyboard/pull/98) merged `f352f50`。Human 删装确认打开主 App 已自动部署；模糊音主开关默认关。
+- 不代表 Assignment Exit、TestFlight 或 Release。
+
+## 2026-09-03 — 首次安装自动部署内置朙月；模糊音主开关默认关
+
+- 空 App Group / 尚未成功部署时，主 App `load()` 会种子一次本地 `rime_needs_deploy`，并在 `ContentView.task` 触发部署。不下载、不经过 Keyboard Extension。
+- 模糊音主开关默认关闭；`zh/z`、`ch/c`、`sh/s`、`n/l` 分组仍默认开，打开主开关即可恢复。已写入的用户偏好不变。
+- 模拟器 XCTest 宿主拆掉默认 `SchemaManager` 时，MainActor isolated `deinit` 会 abort；对 App Group settings / SchemaManager / RimeSettingsStore 使用 `nonisolated deinit`。这不是真机首次安装崩溃证据。
+
+## 2026-09-03 — Adopt KOS Agent Kit v0.6.0 advisory
+
+- PR [#96](https://github.com/shchnk1103/Universe-Keyboard/pull/96) merged `41c0dc5`。Adopted pin 从 `v0.5.0` 改为 `v0.6.0`（`a16c932`）。Envelope 仍为 `advisory`，未启用 `required`。
+- 可选编排合同仅对后续新 Assignment 可用；本仓库未实例化 `ORCHESTRATION_PLAN.md`。既有 Active Assignment 不迁移。
+
+## 2026-09-03 — KOS v0.6.0 Upgrade Review 记为 Deferred
+
+- PR [#92](https://github.com/shchnk1103/Universe-Keyboard/pull/92) merged `cb49e62`。Latest checked = `v0.6.0`；Adopted 仍为 `v0.5.0` advisory。
+- 不 Adopt 可选编排合同，不启用 `required`。
+
+## 2026-09-01 — 串行化主 App 自动同步入口
+
+- 自然真机轮次显示前台与后台自动同步在同一分钟各自启动，产生一条 RIME 失败和一条 Universe 设置成功通知；冻结载荷因此判为失败，精确 RIME 错误码仍待设备重连后读取。
+- 主 App 现在以进程级 lease 统一手动、前台自动与后台自动同步所有权；竞争事务不发布重复阶段通知，后台竞争会保留 15 分钟 retry floor，旧 lease 不能误释放新 owner。
+- 调度器在缺少历史 attempt 时仅在存在 retry floor 的情况下继续提交，避免丢失退避或形成立即重调度循环。双后台入口、取消释放、通知序列与 exactly-once 终态均有回归覆盖。
+- 本地 App/Keyboard `271/0`、RimeBridge `48/0`、KeyboardCore `1068/0` 和严格 Debug/Release build 通过；Architecture / Quality 均为 `Pass with conditions`。旧轮次机器回执、新载荷自然真机复验、TD-002、Product Gate、push、merge 与 Release 仍保持开放。
+
+## 2026-08-31 — 原子化 RIME 后台任务终止所有权
+
+- 独立双审发现 expiration 异步跳主线程仍有交错窗口；现由线程安全状态门让 expiration 与正常返回原子争夺唯一终止权，过期路径不等待 librime 返回即可立即失败完成系统任务。
+- 自动完成通知只在真实完成结果取得成功终止权后发布；安全跳过不误发完成通知。YAML、标准 RIME、私密 coordinator 与设置 apply 边界均闭合取消状态；已完成全部请求 scope 时不再补发矛盾失败通知。
+- 最终本地实现 `3f94073` 进一步为潜在非协作 phase 增加返回后取消检查，并用直接模型测试覆盖 late success、正常成功与未完成 scope 通知条件；聚焦 `23/23`、App `252 passed / 3 device-only skipped`、Keyboard `11/11`、严格 Debug/Release build 均通过，独立 Architecture / Quality delta review 均为 `Pass with conditions`。
+- 正式自然调度、真实 expiration 后 retry、手机通知、`TD-002`、Product Gate、push、merge 与 Release 仍保持开放。预冻结 manifest/receipt 前置包已准备但保持 `HOLD`，证据见 [`docs/evidence/rime-background-sync-terminal-lifecycle-2026-08-31.md`](docs/evidence/rime-background-sync-terminal-lifecycle-2026-08-31.md) 与 [`device preflight`](docs/evidence/rime-background-sync-device-run-preflight-2026-08-31.md)。
+
+## 2026-09-03 — F-02 内置朙月离线闭包合入 `main`
+
+- PR [#93](https://github.com/shchnk1103/Universe-Keyboard/pull/93) merged `ec6c277`。Human Product Gate 接受本片 merge 残差（first-launch 手动部署、转换/反查范围收窄为 `t2s`、fuzzy 默认 ON、Q-06/Q-07/法律/archive）。
+- Assignment 仍为 `Active`。不代表 Assignment Exit、TestFlight 或 Release。
+
+## 2026-08-30 — F-02 内置官方朙月拼音离线闭包（Active，未完成 Product Gate）
+
+- 主 App 内置并校验固定版本的朙月拼音、Essay、Prelude、Stroke 与完整启用范围 OpenCC 资源；用户无需额外下载，Keyboard Extension 不再携带第二份可部署资源。
+- 新增确定性生成清单、SHA-256/大小/精确成员校验，以及 staging、备份、回滚和 last-good receipt；资源缺失、篡改或多余成员会在成功标记前 fail closed。
+- 朙月拼音改用官方 schema 加薄 overlay，候选质量 smoke 覆盖 `ni`、`nihao`、`sanjiaoxing`、OpenCC 与 Stroke，模糊音开关均由真实 iOS librime 集成测试验证。
+- 本条只记录 F-02 本地实现与模拟器门禁，不代表真机、Full Access、性能、hosted CI、独立复审、Human Product Gate、合并、TestFlight 或 Release 已通过；PR #91 不在本工作范围内。
+
+## 2026-08-30 — 收紧 RIME 后台同步过期生命周期
+
+- 两阶段自动同步在标准 RIME 已完成后先切换到 Universe 设置语义，再观察取消；后台时间恰好在阶段间被系统收回时，不再把同一 RIME 范围同时显示为“已更新”和“未完成”。
+- `BGProcessingTask` 的正常返回与 expiration 统一经过一次性终止门：取消只请求一次，任务只完成一次，过期后不得报告成功。
+- 键盘活跃导致跳过时设置 15 分钟最早重试时间，避免向系统反复提交已经过去的执行日期；不改变用户选择的每日/每周正式冷却周期。
+- 本地 CI 等价门禁已通过；实现提交 `0f59770` 尚未 push / 独立复核，正式自然调度、手机通知、Product Gate、merge 与 Release 均未声明通过。证据见 [`docs/evidence/rime-background-sync-lifecycle-remediation-2026-08-30.md`](docs/evidence/rime-background-sync-lifecycle-remediation-2026-08-30.md)。
+
+## 2026-08-29 — 修复 RIME 后台自动同步回调隔离崩溃
+
+- `BGProcessingTask` 注册入口改为显式使用主队列，与 `RimeAutomaticSyncScheduler` 的 `MainActor` 隔离保持一致；实际 RIME 标准同步仍在可取消的异步任务中执行，不进入 Keyboard Extension 或按键热路径。
+- 后台标准同步成功继续复用统一 RIME 通知服务；只有用户已开启 App 通知、RIME 类别、对应通知子项且系统授权允许时，才发送“自动同步完成”。通知不包含目录、词典、恢复码或输入内容。
+- 新增注册队列不变量、自动标准同步成功文案和统一通知投递回归测试。自然后台调度与锁屏通知仍需新构建的真机证据，不由模拟器测试替代。
+- KOS 执行证据见 [`docs/evidence/rime-background-sync-crash-fix-2026-08-29.md`](docs/evidence/rime-background-sync-crash-fix-2026-08-29.md)。
+
+## 2026-08-28 — 方案交付 PR #83 合入 main
+
+- PR [#83](https://github.com/shchnk1103/Universe-Keyboard/pull/83) 合入 `e9aea57`。Human Product Gate Passed（CNB 真机万象成功 + hosted full-path `33174305736`）。
+- GitHub 源与 endpoint acceptable-use 记为 `accept` 残留。这不是 TestFlight 上传或 App Store 提交。
+
+## 2026-08-28 — 万象 staged-content 失败分类为空 zip 条目
+
+- Human v1 日志证明 CNB 归档大小/摘要通过，失败在 `verifying_staged_content`。
+- 生产 `Unzip` 跳过 `lua/data/chaifen.txt` 空文件，导致摘要 `24227ffc…` 对不上 pin `5b182801…`。现改为解压 store 空文件；不削弱校验，不合入 #83。
+
+## 2026-08-28 — 方案交付 PR #83 并入当前 main 并重编号 ADR 0032
+
+- PR #83 分支合并当前 `main`。CI 分级保持 ADR 0031；方案完整性合同改为 ADR 0032。
+- 另立 `SCHEME-DELIVERY-JOURNAL-001`（TD-015）：v1 使用已有 `scheme_delivery.*` payload。不授权合并 #83。
+
+## 2026-08-28 — CI 变更分级完成 full-path 托管验证
+
+- 新增 fail-closed 变更分类：仅根目录 Markdown、`docs/**` 与 `.kos/**` 可走轻量路径，任何源码、工程、测试、资源、脚本、workflow 或未知路径均运行完整 Swift 6 门禁。
+- 分类、轻量检查和 `final-quality-gate` 始终运行；完整构建只在分类为 `full` 时执行，同一 PR 的旧运行会在新提交到达后取消。
+- 实现与证据同步运行 [`33165797218`](https://github.com/shchnk1103/Universe-Keyboard/actions/runs/33165797218)、[`33166502457`](https://github.com/shchnk1103/Universe-Keyboard/actions/runs/33166502457) 已全绿。独立 Architecture/Quality review 返回 `Pass with conditions` 后，修复提交 `0623e7c` 的 hosted full-path [`33168928860`](https://github.com/shchnk1103/Universe-Keyboard/actions/runs/33168928860) 再次全绿。
+- 临时 Draft fixture PR #88 (`bd4b6eb`) 的 hosted run [`33169007898`](https://github.com/shchnk1103/Universe-Keyboard/actions/runs/33169007898) 判定 `docs_only`，`build-and-test` 为 skipped，`final-quality-gate` 成功。该 PR 只作证据，关闭且不合并。
+- 独立 Architecture 复核为 Pass with conditions（A-P2-02 仍为 required-check trust-root 残余）；Quality 复核为 Pass。
+- Human Product Gate Passed。PR [#86](https://github.com/shchnk1103/Universe-Keyboard/pull/86) 合入 `78ed5b5`；PR [#87](https://github.com/shchnk1103/Universe-Keyboard/pull/87) 合入 `11fa096`。未修改 branch protection 或 required checks，也未授权 Release。
+
+## 2026-08-27 — 诊断页加载态与空态
+
+- 根加载在仍 `isRefreshing` 时显示「正在加载诊断日志」，不再伪装成「暂无诊断日志」。
+- 筛选无匹配、有界窗口无完整记录、真正无 journal 三种空态保持区分。
+- 1 秒跟随在 generation/段 watermark 未变时跳过 JSONL 根解码。skip 绑定触发本次解码的 identity peek，不在加载后再采样盘面。未提高 5 MiB / 10,000 条预算。
+- 诊断页 1 秒 skip 与日期目录不再抢 exclusive snapshot fence；进出页面在水位未变时复用已读结果，避免 69 条可见记录仍整页重扫历史段。
+
+## 2026-08-24 — 08 颜表情合入 main
+
+- PR [#80](https://github.com/shchnk1103/Universe-Keyboard/pull/80) 合入 `54ce3bd`。这不是 RC 冻结，也不是 TestFlight 上传。
+
+## 2026-08-24 — 颜表情 Human Product Gate
+
+- Human Product Owner 在 iPhone 13 Pro / iOS 27.0 上完成 08 清单 G-01…G-16，Product Gate Passed。
+- 这不是 Closed，不是可合并，也不证明与 CI 等价全套或 VoiceOver `.selected` 已实现。
+
+## 2026-08-23 — 九键 / 符号页颜表情待确认
+
+- 九键与中文符号页 `^_^` 接入 ADR 0030：单击上屏默认 `^_^`，候选栏展示本地颜表情并可替换当前 pending；再点 `^_^` 接受后新开默认，不做同键轮换。
+- 与九键标点 pending 互斥；不改 ADR 0029 轮换。目录是仓库内第一方字面量，不是第三方颜表情项目。
+- 这不是无障碍/真机 Product Gate，也不是 08 关闭。
+
+## 2026-08-23 — 接受第三方来源派生收据
+
+- Product Lead 接受 Phase A 对 `librime-lua` 与捆绑朙月拼音的派生收据，作为外部 TestFlight 候选的已知残留，不开 Phase B，不改 Vendor 或词库字节。
+- `types.o` 仍无官方 Boost.Regex tag 的精确匹配；朙月拼音仍是官方 blob 加一行归属 URL。这不是精确来源声明，也不代替 App Store Connect 内容版权保存。
+
+## 2026-08-23 — 输入方案许可证按来源展示
+
+- 雾凇拼音与万象拼音的下载、更新和重新下载流程改为读取方案目录中的许可证描述，不再共用硬编码的雾凇 GPL 文案；雾凇展示 `GPL-3.0-only`，万象展示 `CC BY 4.0`。
+- 许可证确认改为按方案和披露版本持久化；披露内容发生实质变化时会要求重新确认。旧版雾凇确认可安全迁移，旧版万象确认不会从曾显示错误项目的共用弹窗迁移。
+- 设置新增“开源软件与内容”，可持续查看可下载方案、内置朙月拼音及随 App 提供的 RIME 组件来源与许可证链接。
+- “开源软件与内容”现在随 App 打包完整离线许可证/署名资料；朙月拼音同时提供 LGPL-3.0、其引用的 GPLv3 与复合词典来源说明，二进制来源仍未精确恢复的项目会明确标记审计残余。
+
+## 2026-08-22 — 完全访问引导支持稍后继续
+
+- “允许完全访问”步骤新增真实的“稍后再开启”入口；点击后继续方案准备与首次输入，不再停在当前步骤。
+- 暂缓不会被记录为已开启或已完成；其他步骤完成后，帮助页会重新显示完全访问作为最后待完成项。
+- 已观测到共享数据不可用时会立即回到恢复引导，不会被暂缓状态掩盖。
+
+## 2026-08-21 — Xcode Cloud RIME 依赖引导准备
+
+- 新增可执行的 `ci_scripts/ci_post_clone.sh`，在 Xcode Cloud clone 后复用现有 manifest 固定、SHA-256 校验和 12-framework 清单合同获取 RIME Vendor。
+- 本地已验证显式 Cloud 仓库路径、目录 fallback 与错误根目录 fail-closed；功能分支 Cloud Build 1 随后在干净 checkout 中成功执行该 hook，验证 12 个 RIME framework artifacts 后完成 iOS build，且无 Issues。
+- Apple Developer Team 与 GitHub-to-Xcode-Cloud 连接已验证；`Default` workflow 使用 Xcode 26.6 / macOS Tahoe 26.6.2，Build 1 精确绑定提交 `cdc6bfe`，无 TestFlight post-action。Archive、签名与 artifact retention 仍未验证。
+- 此准备不签名、不上传、不分发，也不冻结 RC。
+
+## 2026-08-18 — iOS 18 暗色功能键对比
+
+- 仅 iOS 18 暗色重拉层次：字母/空格 `86,86,88`，功能键收回 `46,46,48`，按下高光 `110,110,114`。
+- 同范围给功能键/回车加 `0.5 pt`、白色 16% 描边勾轮廓；不用黑阴影，避免继续贴进暗色底托。
+- iOS 26+ 暗色和全版本浅色仍用原来的字母 `62,62,64`、功能键 `44,44,46`。
+
+## 2026-08-18 — V1.0 最低系统改为 iOS 18.0（先过编译）
+
+- Product Decision 将 V1.0 最低系统从 iOS 26.0 改为 iOS 18.0；工程级、App、Keyboard、测试 target 与 `KeyboardCore` / `RimeBridge` package platforms 对齐到 18.0。
+- Debug / Release 可在当前 Xcode 上编过，产物 `MinimumOSVersion` 为 18.0。这不是 iOS 18 外观、真机或上架证据。
+- 键盘 iOS 18 表面 / chrome 仍留到 Phase 2。
+
+## 2026-08-17 — 九键 Path Bar 上半区点击投递
+
+- Path 芯片命中改走与候选栏相同的投递：item 扩高到 44 pt，系统铬层回退到 cell，直接 tap，不再只等 `didSelect`。
+- Debug 触摸框打开时，Path Bar 显示内容无关探针（hit / idx / band），不写拼音文字。
+
+## 2026-08-15 — 九键常用标点待确认与同键轮换
+
+- 九键 `，。？！` 键改为 ADR 0029 状态机：单击上屏待确认逗号，候选栏展示本地标点；1.0 秒内同键轮换 `，。？！`。
+- 点候选替换 pending；之后再点该键新开逗号。Delete 只拆仍持有的 pending 跨度。
+- 组字中先提交首选再进 pending；L1-ahead 或没有首选时拒绝该键。空格接受后再插入空格。
+- 成对 opener 复用现有补全表；拆不干净则只保留 opener。不改 RIME punctuator。
+
+## 2026-08-15 — 各键盘触摸盒铺满键区
+
+- 26 键命中改回根容器中线快照：`z…m` 与 Shift/删除、上下行共用一条缝，不再因为字母被嵌套进子 stack 而留下米色死区；第二行 `a`/`l` 外侧 18 pt 槽归首尾键。
+- 「显示按键触摸范围」只绘制同一份 `touchFrame`；关闭时移除 overlay 子视图，不再另走一套命中。
+- 九键布局工厂显式保留左/右列与各行语义；在嵌套 UIKit 布局完成后读取真实键面并切网，不再扫描约束、钳制整列高度或手工堆叠 Y 坐标。
+- 九键左四列与右功能列之间的视觉间距按中线分给两侧触摸列，不再留下第四列/第五列之间的竖向死区；高回车和视觉列宽保持不变。
+- 命中快照改为稳定 id，不再按矩形相等回配；Debug 橙框画在键盘表面而不是按钮上，避免九键只命中列顶、以及关闭 overlay 后缩回键面。
+- Debug 增加内容无关的 `TOUCHPROBE` 摘要（路径、overlay 状态、键数与视觉/触摸高度摘要）；无效或不完整几何不会发布半份快照。
+- 普通布局、九键、按钮 tracking、根容器命中和 overlay 统一读取已发布快照；切换键盘页时先失效旧按钮引用。
+- 修复真机上根容器虽命中空隙、但越界返回的按钮没有进入 `UIControl` tracking，导致关闭 overlay 后缝隙无响应：现在由始终存在的不可见 gap control 在原位承接键面外触摸，并转发原按钮 target-action；overlay 只负责绘制，不再偶然充当可交互表面。
+- Human 真机最终矩阵通过：26 键与九键在 overlay 关闭/开启时，按键间隙响应一致；普通键面、字母/删除长按、空格光标与地球仪路径保持正常。
+
+## 2026-08-14 — Debug 按键真实触摸范围
+
+- Debug 诊断增加「显示按键触摸范围」：每个按键自己画一对框（橙色实线 = 触摸，青色虚线 = 外观），列高快照会被钳在键面 + 4 pt，不再画成五根整列。空格和回车也各有一对。覆盖按键、候选栏 compact cell / 展开按钮、Path bar cell 与 44 pt 竖向扩展。
+- 26 键与九键共用中线填缝：点在哪颗键的触摸盒里就响应哪颗。九宫格按真实行列切网，不再先走键面捷径；缝和键面同一套 `touchFrame`。
+- Path bar 空闲态不再显示「点选拼音可加快输入」。
+- 候选栏顶部轻点可提交：不再依赖会等下滑手势失败的 `didSelect`；展开按钮命中框改为按钮自身 outset 并钳在栏内，不再画一条压住末候选的整栏长方形。
+- Release 构建没有此开关，也不会画框；键盘只在设置快照 / 可见性边界读取开关。
+
+## 2026-08-13 — 候选栏垂直命中与诊断浏览稳定性
+
+- 修复紧凑候选栏只有中、下部可点的问题：普通候选 cell 的触控高度从居中的 32 pt 扩至既有 48 pt 容器，候选文字、宽度、排序和提交语义不变。
+- Debug 高保真触摸探针兼容真机 `hitTest` 早于 `.began` 的时序，并严格限定为单个直接触摸；候选可见性事件按布局 burst 合并，避免最近 500 条窗口被逐 cell 回调占满。
+- 诊断页自动刷新不再持续闪烁工具栏 spinner；搜索展示期间冻结根刷新，以唯一分页 owner 在 5 MiB / 10,000 条安全预算内展开连续旧页，关闭后再安全回到最新根页。
+
+## 2026-08-13 — 候选栏触摸链路的隐私安全诊断
+
+- Debug 高保真窗口新增候选触摸路由、手势终态和选择送达事件；只记录上/中/下粗分区、cell 命中与本地关联序号，不记录坐标、索引、候选或输入内容。
+- 探针在 UIKit 完成原有命中判定后旁路投递，不改变候选栏布局、命中返回值、手势取消或选择顺序。
+- 诊断空状态改用当前设置名称“记录诊断数据”，避免继续提示已不存在的“引擎诊断日志”开关。
+
+## 2026-08-13 — 万象基础输入恢复与部署成功合同收紧
+
+- 修复万象官方 `algebra.__patch` 被写入普通模糊音规则后产生无效 YAML 的问题；万象继续保持“暂不支持受管模糊音”，部署准备只清理旧的 Universe 管理块，不再改变上游候选语义。
+- RIME 完整部署只有在收到本轮终态成功通知、校验当前活动方案输入并通过内容无关的基础 smoke 后才标记成功；失败继续保留恢复意图。
+- 恢复方案切换后的待处理自动部署，并以持久失败抑制避免后台重复重试；新的部署意图或人工重试可重新发起。
+- Swift 6 CI 使用完整 Git 历史并在 base commit 或变更文件解析失败时关闭门禁，避免格式检查假绿。
+- TD-012 G2-A 固定模型门通过；G2-B 因 Debug 业务二进制不一致而作废，Product disposition 为 **Hold**，不授权 G3。
+
+## 2026-08-12 — 诊断日志按日期浏览与有界最近窗口
+
+- 诊断页按本地日历日期浏览日志，默认选中最新日期；日期切换保持搜索、分类、复制和清空行为一致。
+- 单日严格快照超过 5 MiB / 10,000 事件安全预算时，不再显示误导性空白，而是在原读取上限内展示明确标记为“不完整”的最近窗口。
+- 日期导航使用原生语义色、现有设计 tokens、横向滚动与 ≥44 pt 触点，并补齐日期隔离、超预算状态和 Store 切换回归。
+
+## 2026-08-12 — 诊断超预算读取恢复闭环
+
+- v1 日志快照超过 5 MiB / 10,000 事件安全预算而显示空列表时，清空入口仍保持可用，并给出与实际恢复动作一致的提示。
+- v1 generation 与 legacy 清空现在返回显式结果；只有完整成功才清空页面状态，失败会保留记录并提示重试。
+- 清空期间暂停自动刷新写回，回归测试覆盖超预算入口、清空成功/失败与 generation 推进。
+
+## 2026-08-10 — TD-012 G1 Closed: octagram vendor + independent review
+
+- New immutable vendor pin `rime-vendor-ios-1.16.1-lua.1-octagram.1` adds
+  `librime-octagram.xcframework` (device arm64 + simulator arm64/x86_64) on top of
+  the unchanged baseline 11 frameworks; baseline `rime-vendor-ios-1.16.1-lua.1`
+  remains the rollback point.
+- Reproducible plugin recipe: `config/rime-octagram-vendor-build.env`,
+  `scripts/build_rime_octagram_plugin.sh`, `scripts/assemble_rime_vendor_with_octagram.sh`.
+- RimeBridge: `RIME_HAS_OCTAGRAM`, module shim, traits load `octagram` with base+lua,
+  Keyboard `-force_load` (octagram + glog), and capability probes for module/`grammar`
+  registry (no `.gram` model, schema, or user-facing feature).
+- Architecture **Conditional Accept** + Quality **Conditional Accept** (independent
+  re-verification); Assignment `TD-012-OCTAGRAM-VENDOR-G1` **Closed** with M-03
+  residual dispositions. Model G2+ and Jetsam measurement remain TD-012 debt.
+
+## 2026-08-09 — 本地企业级诊断 P0 与高保真到期提醒
+
+- `Diagnostics/v1` 以每 process 独占 JSONL、typed allowlist、有界 ingress、generation clear、lease/tombstone reclaim 和 7 天/100 MiB 保留替代旧 500 条写入模型；Main App 提供实时查询、搜索、分页、复制与清空。
+- Debug 首屏高保真链路关联 presentation、触摸终端、RIME owner 发布、UI apply 与候选真实可见性，不记录用户输入内容。
+- 高保真到期提醒默认关闭；诊断页与「通知与提醒」共用类别，Main App 在采样窗口关闭或通知关闭时取消待发送本地提醒。
+- 后续诊断平台 P1（严格全局分页、周期性 retention、完整 health/竞争矩阵、legacy migration）已记录为 TD-013，不属于本轮 P0 实现范围。
+
+## 2026-08-08 — EOD handoff docs (万象 arc)
+
+- Active Work backlog: next default **TD-012**; TD-011 B–D optional; freeze A hold.
+- Assignment / Dashboard / KNOWLEDGE_INDEX / PD status synced after PR #51–#54.
+
+## 2026-08-08 — TD-011 freeze A: native Lua triggers + per-scheme usage copy
+
+- Product: keep fog vs 万象 native triggers (e.g. `rq` vs `/rq`); no silent remap.
+- `RimeSchemeNativeUsageGuide` drives advanced-input「怎么使用」by layout-bound scheme.
+- 万象 status notes document `/rq`·`orq` / `V` / `R` / `U` instead of fog-only examples.
+
+## 2026-08-08 — TD-009 multi-scheme download toast name + progress
+
+- `DownloadState` carries scheme display names; global toast no longer hardcodes 雾凇.
+- Download progress is real when Content-Length is known (throttled); otherwise
+  indeterminate (no fake 0%).
+- Tests: catalog display names; toast message strings for 万象/雾凇.
+
+## 2026-08-08 — TD-010 per-scheme settings capability gates
+
+- `RimeSchemeCapabilityMatrix`: layout-bound scheme gates for productized fuzzy and
+  advanced-input settings (雾凇 full; 朙月 fuzzy-only; 万象 neither in V1).
+- Fuzzy / advanced settings UI: disable controls, status + alert when unsupported;
+  preserve stored preferences; do not mark deploy from unsupported pages.
+- Tests: matrix unit tests; RimeSettingsStore wanxiang / nine-key binding cases.
+
+
+## 2026-08-07 — Layout UI + nine-key with 万象 26-key binding
+
+- Keyboard layout page shows **one** scheme picker for the selected 主键盘 only
+  (no simultaneous “全键盘方案 / 九宫格方案” blocks that mislead 万象 users).
+- Extension provisional layout resolve now passes ADR 0026 scheme bindings;
+  nine-key chrome works when 26-key slot is `wanxiang` and fog T9 is ready.
+- Layout-bound resolve defaults missing `binding9` to `t9` when readiness matches.
+- Fuzzy pinyin deploy patches **all installed letter schemas**, not only active.
+- Tests: `LayoutBoundRimeRuntimeSelectionTests` 10/0; fuzzy multi-schema deploy
+  test renamed/updated.
+
+## 2026-08-07 — Select publish fail-closed: multi-segment double host commit
+
+- Tag dual-gate `selectCandidate` pipeline actions as `sel-*` and strip
+  `committedText` on presentation apply so Core remains the only host-commit
+  owner (covers partial → final long 全拼 selections such as 今天… + 我们…).
+- Regression: `ResponsiveCandidateAnomalyTests` 6/0 (`swift test --filter
+  ResponsiveCandidateAnomalyTests`, Executor-recorded).
+
+## 2026-08-07 — 万象拼音 catalog + ADR 0026 layout-bound schemes
+
+- Catalog: downloadable **万象拼音** (`wanxiang`) from `amzxyz/rime-wanxiang`
+  **`rime-wanxiang-base.zip`** (CC BY 4.0); install/uninstall plan; schema_list
+  when installed. Grammar `.gram` not bundled.
+- `ADR 0026` **Accepted**: per-layout scheme slots + settings pickers.
+- Tests: `LayoutBoundRimeRuntimeSelectionTests` 7/0; `testWanxiangCatalogEntry…`
+  (Executor-recorded).
+- Mixed-candidates PD **Won’t do**.
+
+## 2026-08-07 — RESPONSIVE-CANDIDATE-ANOMALY-001 select double-commit + paging window
+
+- Dual-gate / responsive bridges suppress UI publish during `selectCandidate` so
+  Core owns the single host commit (tap no longer inserts the word twice; Space
+  was already single-path).
+- `ThreadAffineRimeEngineBridge.candidateWindow` runs on the owner-thread live
+  engine after `flushPending`, instead of slicing first-page `lastPublished`
+  candidates (fixes loadMore stall at page size ~12).
+- Regression: `ResponsiveCandidateAnomalyTests` 4/0 (Executor-recorded).
+
+## 2026-08-06 — RESPONSIVE-DELETE-ANOMALY-001 flush-before-bind Delete fix
+
+- Dual-gate bridges flush deferred `processKey` before capturing publish binding
+  for `replaceInput` / select / Delete, preventing stale-bind skip that caused
+  Delete no-op or fail-closed full wipe after burst typing.
+- Regression: `ResponsiveDeleteAnomalyTests` 3/0; KeyboardCore 918/0 (Executor-recorded).
+
+## 2026-08-06 — KOS 2.1 Operational Maturity package (under 2.0)
+
+- Published ops package: Current Status blocks, State sync checklist, residual
+  hard-close dispositions, evidence grades, Active Work Summary (≤10), stacked
+  PR convention, supersession banners.
+- Frozen Knowledge OS **2.0** principles unchanged; S-01 lightweight dual-review
+  skip deferred; no Migration.
+- Entry: `docs/kos/kos-2.1-operational-maturity.md`, `docs/ACTIVE_WORK.md`.
+
+## 2026-08-06 — RESPONSIVE-DEFAULT-ON-001 Product Gate（dual-gate Release default-on）
+
+- Product Gate authorizes ordinary Release to **request dual-gate** responsive
+  RIME (thread-affine serial owner) by default for Chinese layouts.
+- `ResponsiveRimePreflight.productGateReleaseDefaultOn = true`; install remains
+  **fail-closed** to ADR 0004 MainActor-synchronous path on failure.
+- ADR 0025 §8 / ADR 0004 follow-up updated; CANARY_INTERNAL path unchanged.
+- Automated Preflight arming tests updated; KeyboardCore suite green on this tip.
+
+## 2026-08-06 — RESPONSIVE-ALL-LAYOUTS-001（L0 全中文布局，当时仍 default-off）
+
+- Product scope: responsive L0 for 26-key + T9; T9-only L1 provisional dots.
+- `ResponsiveRimeAllLayoutsTests` 8/0; ADR 0025 §0 layout-universal amendment.
+
+## 2026-08-03 — P3-D1-T02/T03 Product Hold（default-off）
+
+- T02/T03 lifecycle harness implementation and independent Architecture/Quality
+  re-reviews are recorded; Wire 10/0、evidence validator 6/0、KeyboardCore
+  full 901/0。
+- Simulator host 未提供可证明的系统键盘激活边界，T02/T03 保持
+  `Blocked (host accessibility)`；Human Product Owner 选择 Option 1 暂缓，
+  不追加代码、测试或设备运行。
+- 该 Hold 不代表 ADR 0025 Accept、Release default-on、Product Gate、真实
+  RIME 或真机生命周期通过；重新打开需要新的 Product Assignment。
+
+## 2026-08-01 — P2 Core 回归矩阵（default-off）
+
+- 新增 L1 `provisionalAhead` 下候选/纠错/翻页/Path/Space 的 fail-closed 矩阵，
+  同时覆盖 Partial Commit checkpoint 不被 stale action 改写。
+- 新增 settled stale-chrome 快照和 epoch/abandon `markedTextHistory` 回归，
+  证明旧 L1/L2 结果不会在 abandon 后再次写入宿主。
+- Focused ResponsiveProvisional **19/0**，KeyboardCore 全量 **861/0**；RIME
+  vendor verify 与 `git diff --check` 通过。
+- Independent Architecture/Quality re-reviews are **Pass with conditions**; P2-EPC
+  history-count/empty assertion is closed only at bounded Core/Fake-host scope.
+- UIKit Extension prefetch、真实 librime/真机主观延迟、jetsam、Release 与
+  Product Gate 仍未验证；dual-gate 继续 default-off。
+
+## 2026-08-01 — T9 P1-D2 Amendment B bounded slice（default-off）
+
+- Product-selected stable shadow now presents the latest host-visible L2 marked
+  text plus pending `·` slots; stale Candidate/Path chrome remains stable while
+  candidate, correction, paging, Path and Space interactions fail closed.
+- Candidate prefetch no longer reaches the thread-affine `candidateWindow` while
+  the visual shadow is ahead. Ordered Delete/restore and all shared engine-output
+  host exits refresh the stable prefix at one MainActor completion boundary.
+- Final focused KeyboardCore tests **16/0**, full **858/0**; vendor structural
+  verification and `git diff --check` pass.
+- Independent Architecture and Quality final reviews are **Pass with conditions**
+  for this bounded slice (P0/P1 = 0/0; four P2 evidence debts remain). This does
+  not authorize ADR 0025 Accept, R6, Product Gate, Release default-on, or a
+  subjective non-stutter claim.
+
+## 2026-08-01 — T9 Rem-3 Polish-2 direction evidence（default-off）
+
+- Polish-2 device re-pair on iPhone 13 Pro directionally retained key-follow and
+  reduced Candidate/Path chrome flicker; the evidence is not Product Gate or
+  Release evidence.
+- Current-tip independent Architecture/Quality review on `80ef54b` is **Pass with
+  conditions**; Quality ran focused 22/0 and full KeyboardCore 854/0.
+- P1-D2 remains open: stable stale Candidate/Path chrome differs from the frozen
+  disabled/cleared affordance contract. Product/Architecture Amendment or a narrow
+  implementation correction is required before engineering close.
+- Dual-gate remains default-off; Formal R5 FAIL, ADR 0025 Proposed and all
+  Product Gate/default-on non-claims remain unchanged.
+
+## 2026-07-31 — T9 响应式 RIME 管线（default-off）合入 main
+
+- 将 `T9-RESPONSIVE-PIPELINE-001` 已验证栈经堆叠 PR
+  [#37](https://github.com/shchnk1103/Universe-Keyboard/pull/37) →
+  [#36](https://github.com/shchnk1103/Universe-Keyboard/pull/36) 合入 `main`
+  （merge `7665c64`）：R1–R4 Wire、R5-Preflight Debug dual-gate 臂、
+  Formal R5 失败证据保留、Rem-1 体感指标、Rem-2 UI coalesce + presentation
+  epoch 门、Rem-Device 方向 PASS 文档与测试，以及 NotificationCenter
+  `@Sendable` 观察者修复（无 `@unchecked Sendable`）。
+- **Release / 默认路径不变**：dual-gate 仍仅 Debug/preflight 可武装；不声称
+  Product Gate、ADR 0025 Accept、Rem-3 实现或 default-on。
+- 功能分支 `codex/t9-responsive-r5-preflight` / `…-rem` /
+  `codex/t9-auto-anchor-s5-checkpoint` 在确认 `origin/main` 可达后安全删除。
+- 文档卫生对齐 Assignment / plan / Product Decision / Dashboard / 索引；
+  Rem-3 仅进入设计冻结（实现仍需另授）。
+
+## 2026-07-27 — 九键长串安全自动锚定：可回滚 S2 原型
+
+- 新增 Debug/显式门控的单次自动锚定事务：首选候选必须提供兼容路径，
+  从完整音节前缀生成 `pinyin' + 数字尾部`，替换后要求首选不变且首屏
+  候选重合率达标；不满足即恢复纯数字输入。
+- 为每个 composition 保存非持久化数字账本；继续输入扩展账本，Delete
+  先恢复原数字身份再执行一次正常删除；显式 Path、commit、reset 与
+  生命周期边界清除自动所有权。回滚失败时 fail closed，不向宿主暴露数字。
+- Fake RIME 聚焦测试 9/9、KeyboardCore 738/738、iOS 27 Simulator
+  Debug/Release 构建通过。冻结长串 Debug A/B 中第 18 键接受锚定，
+  主要 RIME 峰值由约 `110/71/65ms` 降至 `77/54/41ms`；仍需多轮、
+  独立 Architecture/Quality 与真机 Release-like 证据，Release 默认关闭。
+- 同一句软件键盘 B 稳定性扩展达到 5/5 接受，全部保持 `5/5/5` 候选守恒，
+  第 24/32/34 键 RIME 中位数为 `73.9/54.6/41.1ms`。这证明事务可重复，
+  但第 24、32 键仍有明显慢调用；冻结配对 A/B、语料质量与回滚矩阵继续留在 S3。
+- S3 首组 6 条合成语料覆盖 `5/5`、`3/5` 接受，`2/5`、`1/5` 回滚，
+  以及 17 槽不触发和 Delete 后消歧；候选守恒正确 fail closed，但被拒长句
+  仍有 `71–127ms` RIME 调用。单测固化 60% 边界，并禁止本地候选重排覆盖
+  `jin/lin` 同键不同拼写分歧；KeyboardCore 仍为 738/738。
+- 新增首次回滚后的 Debug-only `T9RETRYSHADOW`：只读取后续已返回快照，
+  不调用 RIME、不改状态、不放开第二次事务。40 槽被拒长句连续 3 轮得到
+  完全相同的后续机会位置，五个主要慢键都紧跟在机会点之后。聚焦测试
+  13/13、KeyboardCore 742/742、Debug/Release 构建通过，Release Extension
+  不含 observer 标记；第二次 `replaceInput` 仍需新的候选守恒矩阵和
+  Product/Architecture/Quality 授权。
+- 新增 fixture-gated 真实 RIME 后续事务矩阵，不进入生产 Controller：
+  15 个最大前缀全部以 `2/5` 被拒；89 个逐音节回退中，只有每个位置的
+  两音节版本以 `5/5` 通过。104/104 事务恢复原 raw、composition、首选与
+  前五集合。三轮配对耗时将 `≥50ms` 调用从 15 降到 9，五个固定慢槽改善
+  约 13–17ms；单句证据尚不授权固定两音节策略或多次生产事务。
+- 六条冻结 S3 语料的深度扩展中，两音节版本覆盖已知正例、被拒长句、
+  本地排序和高歧义例，同时仍拒绝 `a × 18` 低质量路径；17 槽阈值不变。
+  两音节 cap 成为下一轮测试假设，但生产最大前缀算法和一次调用预算未改。
+- 新增 24 条声明类别的真实 RIME 语料矩阵：21 条产生提议，最大前缀接受
+  8 条，两音节接受 9 条；两音节保留全部原接受并新增一条自然句，未接受
+  poor case，未绕过阈值。分布已成为 pinned-runtime 回归断言；真实 userdb
+  个性化与生产授权仍待 S5/Architecture/Product Gate。
+- 新增经产品授权的 S5 隔离个性化矩阵：仅在生成的临时 RIME user 目录
+  选择合成候选，以实际排名变化而非文件存在证明学习。一次完整选择使目标
+  从第 5 位升至首位，关闭并重开后仍为首位；长串两音节事务在学习前后均
+  以 `3/5` 通过候选守恒。测试结束删除临时目录，不接触 App Group/真实
+  userdb，也未增加生产热路径逻辑；更广个性化语料和隐私/保留策略仍待审。
+- S5 第一批声明矩阵扩为三个独立完整学习案例和一个局部分段反例，每例使用
+  单独 UUID 临时目录。三个完整目标均稳定 `4 → 0 → 0`；两个 `3/5` 继续
+  接受，一个 `2/5` 继续拒绝。局部分段需额外续写、排名 `2 → 3`，并使后续
+  提议消失，因此不会被误当作学习证明或 Path 权威。
+- Architecture/Quality 首轮独立审查均为 `Pass with findings`。整改后 harness
+  会 canonicalize user root 并强制其为 `/private/tmp` 真后代；完整学习固定
+  只选一次，反例固定一次 partial + 一次 continuation。fixture 类 `6/6`、
+  默认 RimeBridge `32` 通过且 `14` 个预期跳过；故意传入非临时路径时在
+  创建前失败且无残留。Assignment 已 revalidate 至 S5，ADR 格式与索引同步。
+- 后续独立复审关闭两个 S2 P1：Partial Commit 现在清空旧自动锚定账本数据，
+  同时保留无数据的“不重试”状态；候选守恒改为按原始首屏槽位做多重集合
+  计数，重复文本不再缩小 `3/5` 分母。新增三项回归后聚焦测试 `12/12`、
+  KeyboardCore `745/745`，Architecture/Quality 均以无 P0–P3 的 `Pass`
+  绑定 checkpoint `0173782`；Release 默认和 Product Gate 仍未授权。
+
+## 2026-07-26 — 九键长串安全自动锚定：S1 影子观测
+
+- 产品长期方向改为“不要求用户逐音节点 Path”的安全自动有界歧义；建立
+  `T9-AUTO-ANCHOR-001` Product Decision、Assignment、S1–S6 计划和 proposed
+  ADR 0024。
+- 新增 Debug-only `T9ShadowAnchorAnalyzer`：只读取当前已返回快照，输出
+  `T9SHADOW` 计数/原因码；分页、缺失 comment、路径不兼容或过期 revision
+  一律失败关闭，不调用 RIME、不修改输入、不接触用户词典、不记录内容。
+- 个性化候选排序不能覆盖 Path 分歧；聚焦测试 9/9、KeyboardCore 729/729、
+  iOS 27 Simulator 严格 Debug/Release 构建通过。Release Extension 不含
+  `T9SHADOW` 标记；真实合成序列采样与独立 Architecture/Quality review
+  仍待完成。
+
+## 2026-07-25 — 主 App UI 第二刀：Tokens + KeyValue + Loading
+
+- 新增 `AppTokens`（`AppRadius` / `AppSpacing` / `AppIconSize`）；共享 chrome 默认读 token。
+- 新增 `KeyValueRow`、`LoadingStateView`；迁移引导状态行、输入洞察活动行、词典/布局加载反馈。
+- 首页/设置页边距与主卡 padding 改用 token；文档同步。
+
+## 2026-07-25 — 主 App 共享 UI 组件：EmptyState / Metric / AppCard
+
+- 新增 `EmptyStateView`、`MetricCell`、`AppCard`、`SettingsGroup`、`SettingsIconRow`。
+- 迁移：词典/诊断/词条空态；首页与诊断摘要指标；`SettingsTab` 分区 chrome；输入洞察空态与分区卡片；`SettingsNavigationLink` / `InfoSection` 对齐圆角 14。
+- 文档：`UI_STYLE_GUIDE` 组件清单、`PROJECT_CONTEXT` Components 摘要、`main-app-ui` playbook。
+
+## 2026-07-25 — 主 App P0 动效（入场 / 按压 / 状态过渡）
+
+- 新增 `AppMotion`：`AppPressableButtonStyle`、首页卡片 `appCardEntrance`；尊重「减少动态效果」。
+- 首页：两卡 staggered 淡入上移（仅一次）；数字/文案 `contentTransition`；火焰 bounce 可关。
+- 设置导航行与首页可点行统一轻按压缩放。
+
+## 2026-07-24 — 主 App 首页/设置：精致系统感（黑白灰）
+
+- 气质：精致系统 companion，暂不定品牌色；连续天数火焰保留橙色语义。
+- 首页：今日输入主卡圆角 14、灰阶 `AppIconTile`、柔和指标分隔；状态短文案（未开启 / 暂不可用 / 今日 0 / 今日有输入）。
+- 首页新增「键盘与方案」卡：布局 / 输入方案 / 资源状态分行展示；点布局进键盘选择，点方案/资源进 RIME 方案设置。
+- 设置：分组间距与 footer 说明；导航行与 Toggle 卡统一灰阶 soft 图标；圆角 14。
+- 组件：`AppIconTile`、`SettingsNavigationLink` 打磨。规范：`docs/UI_STYLE_GUIDE.md` 主 App 段小改。引导页未动（后期 TipKit 方向）。
+
+## 2026-07-24 — 九键长串：空闲 Path 提示（Lane A）
+
+- 产品锁定：早期 Path / 分段上屏为推荐用法；默认不做输入中「满 N 位」横幅；允许后续 T9-only 质量换速度（需 Product Gate）。
+- Path bar 空闲态（九键中文、无 composition、无 Path 芯片）显示 secondary「点选拼音可加快输入」；首键 / composition 非空立即消失。策略：`T9IdlePathHintPolicy`；UI：`T9PinyinPathBarView`；设置页布局说明补充推荐用法。
+- 非 Path 选项（无 pill、无选择 plumbing）。方案：`docs/plans/t9-long-composition-process-key-latency-plan.md`。
+
+## 2026-07-24 — 九键长串卡顿：force_gc 主因结案 + 测量/卫生项保留
+
+- **结案：** 连续九键数字（不选 Path/候选）的大量 `SLOW KEY` 在源+编译均无 force_gc 后仍存在；主因不是 force_gc，而是 librime `process_key`（`api`）随未确认 raw 变长。记录见 `docs/evidence/t9-continuous-digit-latency-force-gc-case-close-2026-07-24.md`。
+- **保留：** T9SEG 分段计时、api/collect 拆分、bar 预取 idle 限流、主 App「检查九键 Schema / force_gc」、T9-only strip + 部署前 strip/清 `build/t9.*`（卫生，不影响 26 键 `rime_ice` / 共享 force_gc.lua）。
+- **后续：** 长串 `process_key` 优化见 `docs/plans/t9-long-composition-process-key-latency-plan.md`（产品已锁；Lane A 已交付，baseline / Lane B 待定）。
+
+## 2026-07-24 — Path Bar 去掉顶带灰蒙（对齐候选 plain 渲染）
+
+- 九键 Path Bar 有 Path 时整条 34 pt 顶带发灰、浅色模式顶圆角硬矩形：根因是 Path cell 未清底 + 用 `UIButton.Configuration` 绘制，在系统键盘 chrome 下整行合成出垫色/灰蒙（与候选栏曾遇到的 material 问题同类；红钉真机确认垫带 = cell 行）。
+- 修复：`T9PinyinPathBarView` 套用 `CandidateScrollViewStyle`；cell 改为 plain `UILabel` + 显式选中反色胶囊；容器/contentView 透明非 opaque。`T9PinyinPathButton` 仅作选择 proxy，不参与绘制。
+- 真机验证（深/浅色）：顶带灰蒙消失、文字清晰、顶角硬矩形消失、点选 Path 正常。文档：`docs/UI_STYLE_GUIDE.md` Path 列表呈现约束。
+
+## 2026-07-23 — KEYBOARD-LAYOUT-9KEY-PINYIN-004 Assignment Closed
+
+- Product Lead 正式关闭 Assignment 004（`PD-…-004-ASSIGNMENT-CLOSE`）：目录/原子 Path、H5 residual、residual-B 真机 Pass、A1 文案、provisional-only C 均已交付。
+- 复合 Human residual-track Pass：H5-A/B/C + residual-B。功能 residual 清空。
+- **不宣称** App Store 发版、engine-native `sel_*` coverage，或抹除首次 Gate 5 Fail 历史。
+
+## 2026-07-23 — Gate5 provisional-only mixed-raw C continue
+
+- 无 Path 点选时：误触 JKL → Delete 若 RIME 留下 mixed raw，Core 仍以 `sourceDigits` 为账本 peel/续输，继续输入不会卡在幽灵 `…5`。
+- mixed-raw 漂移后 resync 纯数字时，host 用本地 progressive 字母投影（忽略 comment 重切分），避免 `fan fan` 形态粘在 marked text。
+- 取消 `XCTSkip`；KeyboardCore **712 / 0 skip / 0 fail**。
+
+## 2026-07-23 — Residual-B Path-ledger cursor（单字/多字统一）
+
+- Gate 5 residual-B：**Path 游标**。用户已 Path 点选前缀后，候选确认推进 `K=min(CJK字数, 剩余用户Path栈)` 站；数字消费跟音节走（非 `dropFirst(K)`）。
+- 下一站若用户曾点选 → Path 展示该槽选项并 **soft-select**（如「请」→`wei` 选中；「请喂」→`fan` 选中）。栈耗尽（「请喂饭到」）→ `wo…` **无**伪造选中。
+- 触发：多音节用户栈 **或** unchanged-raw；保留 `qiu→球` 等单音节 pure-digit nested partial。Host 无内部数字。
+- 自动化：KeyboardCore **712 / 1 skip / 0 fail**。**Human residual-B 真机 Pass**（2026-07-23）。PD：`PD-…-GATE5-RESIDUAL-B-PATH-LEDGER-PEEL` Accepted。
+
+## 2026-07-23 — 完整 Path 目录、原子呈现与 Gate 5 residual（KEYBOARD-LAYOUT-9KEY-PINYIN-004）
+
+- 九键 Path 改为本地完整音节目录驱动（compile-time catalog + progressive focus），Path Bar 固定高度横向列表展示当前焦点全部可选项，不再依赖扩展候选窗「刷完才有 Path」。
+- 原子 composition revision：候选与 Path 同快照发布；前缀只锁定拼写、完整音节可推进；Partial Commit / Delete 保留 Path 身份时禁止把内部数字泄漏到 host marked text。
+- Gate 5 β-limited：`T9CompositionIdentity` 处理 shortened remainder 与 typo Append/Delete；engine-only unchanged-raw 仍 fail-closed（不猜槽）。
+- Human residual H5：多位 progressive 以 Core `sourceDigits` 为 SoT（消除幽灵 JKL）；Path 选择后重投影剩余拼音、不丢尾；短串 `da→JKL→删→MNO` Path 与 `dao` 候选对齐。
+- 自动化：Gate5 定向矩阵含 Human residual 回归；完整 Human Product Gate 仍不宣称通过。权威见 Assignment 004 与 PD post-β residual。
+
+## 2026-07-22 — T9 Path 原子快照与固定前台成本（KEYBOARD-LAYOUT-9KEY-PINYIN-003）
+
+- Path 直接点击不再执行按拼写数量增长的 `replaceInput → candidateWindow → restore` 循环；一次推进最多 `1 replaceInput + 1` 个固定 48 项只读窗口。
+- KeyboardCore 新增 composition revision；候选选择先失效旧 segmented snapshot，再从新余段发布 Path。完整 `qing/wei/fan/dao → 请喂饭到` 回归会立即切到 `wo`。
+- 所有 composition marked-text 更新经过带来源边界：内部数字投影 fail closed，显式数字页 suffix 和候选确认前缀中的合法数字保留。Runtime fail-close 后 Return/符号也不再提交遗留 T9 raw。
+- `qiu → 球 → Delete` 与 `qiule → qiul` 的现行 Product Decision 语义保持。Stage A pinned-RIME 与定向 Core 测试通过；iPhone 13 Pro 可感知延迟及交互 Product Gate 仍待人工验证。
+
+## 2026-07-21 — Path Bar 局部替换与焦点 Delete（KEYBOARD-LAYOUT-9KEY-PINYIN-002 Amendment H）
+
+- Path Bar 选择只替换对应拼音片段并保留用户已输入的未选择后缀：`qiu le → qiule`，选择 `shu` 则为 `shule`；RIME 新排名出的 `ke` 不得覆盖原有 `le`。
+- 候选「球」后的第一次 Delete 精确撤销为 `qiule`，并恢复 `qiu'53` 锚定 raw；安全的删除前 marked-text 快照优先于重建产生的 `qiu5` 等混合内部串。
+- 第二次 Delete 按当前未确认焦点删除 `l`：内部 `qiu'53 → qiu'3`，可见 `qiule → qiue`。任意含 ASCII 数字的 T9 preedit 均不得进入 host。
+- focused qiu 完整序列曾通过；最后的 refined-raw 通用修正因 Codex 执行额度耗尽尚待复跑。Grok 接手说明见 `docs/assignments/keyboard-layout-9key-pinyin-002-grok-handoff-2026-07-21.md`，Product Gate 保持 Pending。
+
+## 2026-07-21 — 九宫格确认前缀、完整音节与逐键显示（KEYBOARD-LAYOUT-9KEY-PINYIN-002 Amendments E/F/G）
+
+- Path Bar 确认 `qiu` 后，RIME session 以 `qiu' + 剩余数字` 锚定；输入框只显示已确认的 `qiu`，候选与后续路径必须继承该前缀，失败则整次回滚。
+- 对剩余数字优先执行有界完整音节探测（最多 6 位、48 次 live-RIME probe），例如 `53` 可同时提供经 RIME 授权的 `ke / le`；单字母分支仅作为后备，不再让候选页稀疏度替用户缩窄选择。
+- 普通九宫格逐键输入最多显示一个字母槽位：`8 → t`、`86 → to`、`868 → tou`。RIME 可继续在内部预测 `ta / tong`，但预测不会提前进入输入框，内部数字也不会暴露。
+- 自动化验证：T9 Path `46/46`、布局与运行时 `14/14`、KeyboardCore 全量 `647/647` 通过；最终 Debug 真机包已构建并安装到 iPhone 13 Pro（iOS 27.0），空白备忘录首按 `TUV` 实测只显示 `t`。Device Hub 后续窗口焦点不稳定，`to / tou` 与 `qiu → le` 完整矩阵仍保持 Product Gate Pending。
+
+## 2026-07-21 — 九宫格剩余拼音与可见字符删除（KEYBOARD-LAYOUT-9KEY-PINYIN-002 Amendment D）
+
+- 修复 `toutoumaiqiule → 偷偷买` 后把 `748 53` 当显示文本及整串 provenance 的问题：空格/撇号分隔的数字尾巴现统一识别为内部 raw，剩余状态对齐到 `74853 / qiu le`，Path Bar 不再错误回到 `t / u / v`。
+- T9 host preedit 不再回退显示内部数字；无有效 comment 时只保留显式 refine 字母，session fallback 保留最后安全拼写。
+- 普通未确认 Delete 改为删除最后一个可见拼音字符并 exact-refine：`tou → to → t → 空`，不再因较短数字串重新排名而跳成 `tong → ta`。显式分段与 Partial Commit checkpoint Delete 合同不变。
+- 新增 spaced-tail、`qiu` provenance、digit-bearing comment/fallback、exact Delete 与双失败 fail-closed 回归。KeyboardCore `642/642`、RimeBridgeTests `28` passed + `4` fixture skips、主工程 `127/127`、Debug/Release 严格构建通过；真机交互与延迟 Product Gate 仍待复核。
+
+## 2026-07-21 — 九宫格长输入保持用户选择（KEYBOARD-LAYOUT-9KEY-PINYIN-002 Amendment C）
+
+- 修复长串分段输入确认 `xian / zai / you` 后，下一焦点因只检查前 16 个候选而收缩成单个 `yi` 的问题：音节发现改用有界 48 项窗口。
+- 精确音节不足 5 项时，继续用当前物理键组做有界 live-RIME 探测；仅发布 comment 明确授权的分支，不引入静态拼音图、笛卡尔展开或第二候选引擎。
+- 每次推进后的 path focus 都保持未选中；即使 RIME 确实只授权一个选项，也不会代替用户选择、确认或继续推进。探测逐次恢复原始 raw，失败沿用完整事务回滚。
+- 新增首屏 16 项之后仍有合法音节、单个精确音节仍需补充分支、无隐式选择与 session raw 恢复回归测试。Focused Core、KeyboardCore 全量、RimeBridgeTests、主工程 Simulator 测试及 Debug/Release 严格构建通过；真机长输入与延迟 Product Gate 仍待执行。
+
+## 2026-07-20 — 新用户启用旅程与 Full Access 文案边界（RELEASE-2026-0801-03，Conditional Pass）
+
+- Product Decision `PD-RELEASE-2026-0801-03` 与产品源 `docs/ONBOARDING_ACTIVATION.md`：定义添加键盘 → 完全访问 → 准备资源 → 首次输入清单、canonical 文案边界与 Full Access 能力矩阵。
+- 主 App「启用指南」改为可重入激活清单：诚实说明系统无法代开键盘/完全访问；诊断项收入高级折叠区。
+- 纯状态模型 `ActivationChecklistState` 与单元测试 6/6 PASS。
+- 真机矩阵（iPhone 13 Pro / iOS 27 beta 3）：FA 关仍可唤出键盘且 `nihao` 候选与 FA 开一致；可感知差异主要为按键震动；无降级提示。Product Gate **Conditional Pass**；TD-004 残留 follow-up（矩阵保真 + Extension 可见降级）。
+
+## 2026-07-20 — T9 Partial Commit 剩余显示与 path 刷新
+
+- Partial Commit 在 T9 下剩余 preedit 走 `T9PreeditResolver`（comment 优先）：选「你好」后 marked 为 `你好ya`，不再泄漏剩余 raw 数字 `92`。
+- 当 librime **保留整串 digit raw** 时，Core 按剩余拼音字母数剥离未确认后缀（`6442692` + `ya` → `92`），path bar 按剩余键重建（`wa/ya/za` + `w/x/y/z`），不再误用首键 `m/n/o`。
+- 整词 compact 合并改为**先首音节、再首键字母**（上限 5），避免字母位挤掉 `ya`。
+- **Delete 恢复 / checkpoint**：`previousDisplayText` 取宿主 marked / comment 预编辑，不再误存 T9 raw；恢复走 `applyRimeOutput` 的 T9 显示路径；无引擎 fallback 删除禁止把 digit raw 写回宿主。
+- `PartialCommitControllerTests` 覆盖剩余剥离、path 重建与 Delete 不泄漏数字。
+
+## 2026-07-20 — 九宫格 path bar 音节级渐进（KEYBOARD-LAYOUT-9KEY-PINYIN-002 Amendment B）
+
+- 整词态 compact 栏禁止展示整句多音节路径（如 `ni xian zai` 叠字）；只保留**首音节**（`mi` / `ni`…）+ **首键字母**（`m` / `n` / `o`），上限 5。
+- 确认已选首音节后，下一段改为**音节级**选项（`xian` / `zhan`…），由 live RIME comment 在对应分段索引授权；若无多字母音节则回退到下一键字母组（`g` / `h`）。
+- **直接点击** path 选项：一次即确认并推进下一段；**选拼音**仅在当前焦点 first/next/wrap 暂选，不负责确认推进。
+- Path bar UI 强制单行截断，避免固定 34pt 行高内换行重叠。
+- 聚焦测试 `T9PinyinPathTests` 全绿；独立 Architecture/Quality 与真机 Product Gate 仍属 002 未关闭项。
+
+## 2026-07-19 — 九宫格单键精准选项与选拼音循环（KEYBOARD-LAYOUT-9KEY-PINYIN-002，Active）
+
+- `MNO` 等单个九键按键现在从 KeyboardCore 的规范键位身份生成完整有序选项；`6` 即使在 RIME comment 只有 `o` 时也显示 `m / n / o`。多键路径仍由兼容 RIME comment 决定，不新增候选引擎。
+- **选拼音** 改为首次/下一个/循环选择，并与路径直接点击共用同一事务式 `replaceInput`；成功 refine 保留单键选择快照，失败完整回滚，所有生命周期边界清除陈旧授权。
+- 选中路径现在复用首选候选的反转色圆角高亮；初始无高亮。显式选择后，宿主 marked text 严格显示当前 `m/n/o`，不再被首候选的完整拼音 comment 覆盖；失败切换恢复此前显示。
+- 固定 34 pt 路径栏、候选栏几何和 Extension session-only 边界不变；前序完整路径面板不再由产品交互入口打开。
+- pinned librime `1.16.1` Spike 已证明 `m / n / o` 均返回非空中文候选且不提交文本；KeyboardCore 全量测试、RimeBridgeTests、主工程 Simulator 测试及 Debug/Release 严格构建通过。独立 Architecture/Quality 审查、clean-commit Spike 和真机 Product Gate 仍待完成。
+- Amendment A 新增分段消歧状态机：`MNO → GHI` 的整词态显示 `mi / ni / m / n / o`；已暂选的 `n` 会跨后续数字保持焦点和选中态，点击已选 `n` 才确认并推进到无选中态的 `g / h`。**选拼音**只在当前焦点循环，活动 T9 的空格标题为 **选定**且仍提交首个/高亮中文候选。
+- 最终 pinned-librime 硬门证明 `n'g / n'h` 的 live comment 含对应第二分段，而 `n'i` 仅产生无第二分段的回退 comment；机器断言为 `authorizedSuffixes=g|h`。实现使用每个物理键至多 4 次有界 session probe，不维护静态拼音图；聚焦测试 `34/34`、KeyboardCore 全量 `628/628`、Debug/Release 严格构建通过，交互 Product Gate 仍按独立证据处理。
+
+## 2026-07-19 — 九宫格精准选拼音（KEYBOARD-LAYOUT-9KEY-PINYIN-001，Accepted / Closed）
+
+- Product Decision + Assignment `Ready→Active→Accepted / Closed`；ADR 0020 扩展 ADR 0018：混合 T9 raw input、composition refinement、comment 路径来源；双 revision（`rawInputGeneration` / `provenanceRevision`）与 new-output hard apply。
+- 真实 librime Spike **PASSED**（pinned 1.16.1 / `t9`）：`replaceInput` 字母 refine 无 host commit；`64→ni`；继续输入得 `ni4`；BackSpace 正常。证据：`evidence/keyboard-layout-9key-pinyin-spike/20260718-201043/`。
+- KeyboardCore：`T9PinyinPath*`、`selectT9PinyinPath`、`t9PinyinPathsChanged`、扩展 `T9CompositionCommitPolicy`；`T9PinyinPathTests`（21）+ 全包自动化矩阵（Codex rereview-5）。
+- Keyboard Extension：固定 34pt 精准拼音栏、「选拼音」完整路径面板（与候选展开互斥）；panel 绑定 provenance revision。
+- Codex Architecture + automated Quality **Pass**（rereview-5）；Human 真机 Product Gate **PASS**；PR [#20](https://github.com/shchnk1103/Universe-Keyboard/pull/20) 合并入 `main`（`fe9010f`）。未升级 librime；未改主 App 部署边界。
+
+## 2026-07-17 — 九键 chrome 向原生九宫格靠拢（KEYBOARD-LAYOUT-9KEY-UI-001）
+
+- 中文九键字母页对齐系统九宫格：字母组主标签（ABC…WXYZ）；左区四列；右列删除 SF Symbol / 颜表情 `^_^` / **双行高 return 箭头**；底栏表情 + **选拼音（占位）** + 宽「拼音」（列宽 1+1+2）。
+- 类型阶梯与符号分离：SF Symbol **22**；字母 **16**；功能文字 **15**；空格/拼音 **14**。回车不再显示 `send` 等宿主文案。
+- RIME 仍接收数字 2–9（`accessibilityIdentifier` + `t9Digit`）；选拼音 / 颜表情为 chrome 占位，完整产品行为另立项。
+- 本地 `photos/` 仅作设计对照，已 gitignore；Assignment `Accepted / Closed`；领域说明见 `KEYBOARD_LAYOUT.md` / `UI_STYLE_GUIDE.md`。
+
+## 2026-07-17 — 文档卫生整理（DOC-HYGIENE-001）
+
+- 规范化全部 `docs/plans/*` 生命周期头为 `Active` / `Archived` / `Superseded` / `Abandoned`。
+- 同步已关闭但头状态漂移的 Assignment：`KOS-GOV-001`、`ENV-TOOLING-001` → `Accepted / Closed`。
+- 修复双 ADR `0017`：上屏后联想保留 ADR 0017；App 通知/Toast 重编号为 ADR 0019 并更新引用。
+- 精简 `README.md` 为入口/最短构建/导航；刷新 `DOCUMENTATION_HEALTH` 快照与债务队列。
+- 未改动生产代码、测试、构建或产品运行时行为。
+
+## 2026-07-17 — Knowledge OS 2.0 运营迁移（KOS-MIG-001）
+
+- 发布并关闭 `KOS-MIG-001`：将 Knowledge OS 2.0 从“规范已发布”推进到“仓库单轨运营”。
+- `docs/kos/` 继续拥有冻结治理合同与 Zero-Context Startup；`docs/KNOWLEDGE_OS.md` 明确为运营入口（layers / 导航协议 / self-healing），不再与冻结原则竞争。
+- 更新 Source of Truth、导航索引、文档图与依赖路由；写入迁移计划、完成记录与回滚说明。
+- 未改动生产代码、测试、构建、Runtime/RIME、Assignment Policy，也未开启 Knowledge OS 2.1/3.0 或领域文档大搬家。
+
+## 2026-07-16 — 26 键 / 中文九键布局切换（KEYBOARD-LAYOUT-9KEY-001）
+
+- 新增 `KeyboardLayoutStyle`、版本化 T9 就绪标记、`RimeRuntimeSelection` 有效方案解析，以及 `T9PreeditResolver` / 无 raw 数字上屏策略（ADR 0018）。
+- 主 App「设置 → 输入体验 → 键盘布局」提供 26 键 / 9 键卡片与无字符缩略图；启用九键走安装→部署→验证→就绪→最后写布局，失败保持原布局。
+- 雾凇安装清单与卸载清理包含兼容版 `t9.schema.yaml`；卸载先回退 26 键并失效就绪再删资源；切换离开雾凇仅回退布局并在资源完整时保留就绪。
+- Keyboard Extension 在中文 + 就绪九键时显示 3×3 T9 键（数字+字母），英文与自动英文场景保持 QWERTY；设置仅在出现/激活时缓存。
+- T9 兼容性 Spike 已通过固定 librime 1.16.1（移除 `t9_processor`）；不升级 vendor。
+- Codex 实现复审通过；Product Gate PASS（真机证据包）；Assignment `Closed`。
+
+## 2026-07-16 — 上屏后联想 V1.3 真机与配对性能证据
+
+- 在物理 iPhone 13 Pro、iOS 27.0 beta 3、雾凇拼音和完全访问开启的环境中，重新核对系统键盘注册与权限，并用正常签名的 Release 合并提交验证上屏后联想。
+- 开启状态下，重复 `chile -> 吃了` 后稳定显示 V1.3 词表中的接续候选；关闭状态下仍正常上屏，但候选栏保持为空。冷进程重启后两种状态都能恢复真实 RIME 输入，测试草稿最终清空且未发送消息。
+- Activity Monitor 与 Time Profiler 配对快照覆盖冷启动、最终提交、候选刷新、CPU、物理内存和 250ms 卡顿表；该设备/构建上未观察到无法解释的功能回归。具体数值只属于带环境与重验证条件的证据快照，不是永久性能预算或广泛兼容性结论。
+- PR #13 已合并且 CI 通过，但没有提交的独立 review；Assignment 已推进到 `Completed`，仍需独立 Quality/Architecture review 后才能正式 `Reviewed/Closed` 并归档 V1.3 计划。
+- 独立 Quality、Performance & Release 与 Architecture & Knowledge 审查已在 `2026-07-16` 通过并形成可复算的记录；Product Gate 仍待明确关闭，因此 Assignment 和 V1.3 计划尚未进入正式收口状态。
+- 人类 Product Lead 已在 `2026-07-16` 明确关闭 V1.3，并授权 PR #14 转为 Ready、合并以及合并后的安全分支清理；Assignment 已记录为 `Closed`，V1.3 计划已归档。
+
+## 2026-07-15 — 有界渐进式多错误召回预检
+
+- 按 KOS 2.0 发布并完成 `TYPO-CORRECTION-003`：在不改变 V2.0 生产默认值的前提下，新增纯内存、默认关闭的 60/64/8 渐进式召回计划。
+- 规范长句双错误输入 `wimenjintianquhongyuan` 可在无生产特例表的情况下召回 `womenjintianqugongyuan`；召回计划按最多八项分批，但没有连接 RIME、候选 UI 或持久化路径。
+- 聚焦测试及 KeyboardCore 全量回归通过；语义评分、真实 RIME、配对性能和生产启用仍属于 `TYPO-CORRECTION-002` 的后续 Gate。
+- 根据 Product Owner 澄清，将指定验收环境纠正为 Device Hub iOS 27 iPhone 17 Pro Max 模拟器；已有通用 UI baseline 不等于上下文纠错场景验收。
+
+
+> **AI agents**: Load this file only when investigating historical decisions, debugging regressions, or understanding why a specific implementation approach was chosen. Do not load for routine coding tasks.
+
+---
+
+## 2026-07-15 — 上屏后联想 V1.3 首候选自然度优化
+
+- 资源总量保持 250 条不变，移除 8 个容易在无关语境中抢占的单字后缀，替换为 8 个经过人工审查的具体上下文。
+- 在既有 15 类 Top-3 合成基准之外，增加每类一个精确 Top-1 自然度门禁，并增加高歧义单字后缀抑制门禁。
+- 排序算法、状态机、候选 UI、资源安全上限和隐私边界均未改变；仍不读取宿主上下文、不学习、不持久化、不联网。
+- 模拟器行为验证新增强制前置顺序：确认设备、正常签名与 App Group、雾凇安装/基础检查/当前方案、系统键盘启用与实际切换后，才允许开始输入测试。
+- V1.3 已按该顺序在 iOS 27.0 iPhone 17 Pro Max Simulator 完成验证：`吃了 -> 吗 -> ？`、`我在地铁 -> 上` 可连续选择，单字 `我` 不产生联想，删除可清理状态；真机手感、启动/按键延迟及内存对比仍是发布前门禁。
+
+## 2026-07-15 — 上屏后联想 V1.2 常用场景扩展
+
+- 内置接续资源从 100 个扩展到 250 个手工编写的合成上下文，新增家庭、购物、学习、娱乐、天气等常用场景，并增加更具体的多字后缀以减少泛化候选抢占。
+- Top-3 合成回归集从 30 个扩展到 60 个，覆盖 15 类场景且每类固定 4 个案例；继续保留未知后缀为空和资源失败关闭语义。
+- 运行时排序、状态机与隐私边界不变：仍为最长精确后缀与资源顺序，不读取宿主上下文、不学习、不持久化、不联网，也不改动 RIME session。
+- V1.2 已在安装并启用 `rime_ice` 的 iOS 27.0 iPhone 17 Pro Max Simulator 验证 `吃了 -> 吗 -> ？`、`早餐 -> 吃了吗`、`下雨 -> 了` 和删除清理；真机候选手感、启动/按键延迟及内存对比仍是发布前门禁。
+
+## 2026-07-15 — 上屏后联想 V1.1 质量基线起步
+
+- 内置接续资源从 30 个扩展到 100 个手工编写的通用上下文，覆盖餐饮、日程、问候、工作、行程、关怀、物流和常见提问等场景。
+- 增加严格的资源大小、词条数量、文本长度、重复值和候选数量校验；不合规资源会安全降级为空候选。
+- 增加 10 类、30 个合成代表场景的 Top-3 回归基准及未知后缀负例；该基准不包含真实用户数据，也不作为真实覆盖率或接受率证据。
+- 隐私与输入架构保持不变：不读取宿主上下文、不持久化输入、不学习、不联网，也不改动 RIME session。
+
+## 2026-07-15 — 上屏后联想 V1 自动化实现
+
+- 中文内容成功上屏后，候选栏可从本地内置词表继续推荐常见续词、标点和少量 Emoji；候选可连续选择，例如 `吃了 -> 吗 -> ？`。
+- 联想状态与 RIME 组合态相互独立，活动组合始终优先；删除、换行、英文模式、键盘隐藏、进程结束或关闭设置会清理状态。
+- 最近上下文仅在当前 Keyboard Extension 进程内保留，最多 32 个 `Character`，不读取宿主上下文，不持久化、记录、同步或上传；仅保存启用开关。
+- KeyboardCore 全量测试及严格并发 Simulator 构建通过；真机候选手感、启动/按键延迟和内存对比仍是发布前门禁。
+
+## 2026-07-15 — 统一 App 通知与 RIME 分项提醒
+
+- 设置页新增统一的”通知与提醒”入口：App 通知总开关、RIME 云同步类别和 App 内操作状态提示均由主 App 的同一状态源管理；RIME 页面复用相同控件，两个入口不会出现状态分叉。
+- RIME 通知类别新增”RIME 标准同步”和”Universe 设置同步”两个通知子项。它们只筛选提醒，不改变自动同步总开关或实际同步范围；关闭最后一个通知子项会同时关闭 RIME 类别和 App 通知总开关。
+- 两个通知子项同时开启时，一次完整同步合并为一组开始和结果通知；只开启一项时，仅按该部分真实的开始、完成、失败或尚未执行状态提醒，避免把另一阶段的失败错误归因给已选择的部分。
+- 旧 RIME 通知偏好会迁移为两个子项的默认选择，不自动请求权限，也不改动自动同步设置。操作 Toast 仍可独立关闭；前台有 Toast 时，系统通知只保留在通知中心，避免重复横幅和声音。
+- Swift 6 严格并发构建、通知/同步聚焦测试和 `UniverseKeyboardTests` 全量模拟器测试通过；系统权限、通知中心呈现和真实后台机会仍需物理 iPhone 验收。
+
+## 2026-07-15 — 修复 RIME 自动同步冷却与状态通知
+
+- 主 App 启动和回到前台时的 Universe 私密设置维护现在服从用户选择的每天或每 7 天冷却时间，并按尝试时间节流；同步失败或取消后也不会在每次打开 App 时立即重试并反复弹出成功状态。
+- 首次成功同步只解锁自动同步资格，不再替用户开启总开关；用户主动开启后会显示并默认启用”RIME 标准同步”和”Universe 设置同步”两个独立子开关。关闭最后一个子项会同时关闭总开关；手动”立即同步”仍完整同步两部分，并重置前台和后台的共享冷却时间。
+- “同步提醒”明确为”同步通知”；用户授予权限后，手动与自动同步的开始、完成、失败或取消都会发送不含目录、词库、恢复码和输入内容的本地通知。
+- 自动通知会明确说明本次处理的是 RIME 标准资料、Universe 设置或两者，避免局部成功被误解为全部同步完成。
+- 增加通知结果文案测试并通过严格 Debug Simulator 构建及同步相关针对性测试；后台任务实际触发和通知中心呈现仍需物理 iPhone 验收。
+
+## 2026-07-15 — 有界渐进式多错误召回预检
+
+- 按 KOS 2.0 发布并完成 `TYPO-CORRECTION-003`：在不改变 V2.0 生产默认值的前提下，新增纯内存、默认关闭的 60/64/8 渐进式召回计划。
+- 规范长句双错误输入 `wimenjintianquhongyuan` 可在无生产特例表的情况下召回 `womenjintianqugongyuan`；召回计划按最多八项分批，但没有连接 RIME、候选 UI 或持久化路径。
+- 聚焦测试及 KeyboardCore 全量回归通过；语义评分、真实 RIME、配对性能和生产启用仍属于 `TYPO-CORRECTION-002` 的后续 Gate。
+- 根据 Product Owner 澄清，将指定验收环境纠正为 Device Hub iOS 27 iPhone 17 Pro Max 模拟器；已有通用 UI baseline 不等于上下文纠错场景验收。
+
+## 2026-07-14 — 有界多错误拼音纠错 V2 实现
+
+- 新增与可见 RIME composition 隔离的 sidecar session，纠错假设查询不会改写用户正在输入的拼音、marked text 或候选分页状态。
+- KeyboardCore 增加本地有界双误触假设搜索和独立 corrected-input 查询接口；多错误候选仅显式点击提交，且不会因搜索结果自动提升到首位。
+- 多错误搜索移出按键同步路径，改为 180ms 可取消输入停顿后刷新；普通 RIME 候选仍保持逐键同步更新。
+- 发布 `TYPO-CORRECTION-002` 的产品合同、Assignment、ADR 0015、实现计划和 V2 增量 Registry。KeyboardCore 全量测试、iOS Debug/Release Simulator build、RimeBridge contract tests 及 iOS UI baseline（9 通过、1 按设计跳过）通过；真实 rime_ice fixture、上下文候选停顿 UI trace、Device Hub iOS 27 iPhone 17 Pro Max 验收及性能结论仍待完成。
+
+## 2026-07-14 — 修复键盘预创建与挂起阶段的 RIME 文件锁终止
+
+- 真机高频切换验收定位到 Keyboard Extension 被 RunningBoard 以 `0xdead10cc` 终止；系统可在 `viewWillAppear` 前预创建并直接挂起扩展，因此仅在隐藏回调中 finalize 不能覆盖该路径。
+- `viewDidLoad` 现在只解析只读运行时目录并使用内存回退引擎；librime 仅在 `viewDidAppear` 确认键盘已实际呈现后才初始化、创建 session 并打开用户词典。
+- 进程内仍保持 librime 单一 owner；正常隐藏路径同步清理输入状态并 finalize runtime，重新显示时再初始化 runtime、创建 session 并恢复活动输入方案，不依赖时机不确定的 `deinit`。
+- 诊断 writer 增加可见性生命周期屏障：挂起前丢弃待写批次并阻止延迟 App Group 写入，恢复显示后再接受日志，避免诊断副作用跨入系统挂起阶段。
+- 增加 RIME 可见性生命周期与日志挂起/恢复测试；真机高频切换与 AirPods 双设备路由仍需完成最终回归。
+
+## 2026-07-14 — 完整修复系统点击音输入视图造成的空白键盘崩溃
+
+- Device Hub 复现并定位到 `KeyboardViewController+Presentation.swift:80`：点击音承载视图在控制器 `init` 中直接赋给 `inputView`，使 UIKit 可能在 `viewDidLoad` / KeyboardCore bootstrap 前进入 `viewWillAppear`；此前仅保护 `textDidChange` 不能覆盖这条生命周期路径。
+- 点击音承载视图改为通过标准 `loadView` 创建，恢复 `loadView -> viewDidLoad -> viewWillAppear` 顺序，同时继续使用 `UIInputViewAudioFeedback` / `UIDevice.playInputClick()`，没有重新引入 Extension 自有音频会话。
+- Device Hub 两次冷启动均成功；英文输入、`nihao -> 你好` 候选提交、`zhongguo` 候选展开和切走时组合清理通过，隔离冷启动 UI 测试及严格 Release Simulator 构建通过。物理 iPhone/iPad 当时不可用，AirPods 与真机持续输入仍待验收。
+
+## 2026-07-14 — 候选呈现路径剩余性能优化
+
+- 候选触控诊断开关改为随键盘设置快照刷新；`pointInside` / `hitTest` 不再轮询时间或读取 App Group 偏好。
+- collection 数据源直接复用重建边界已经清理过的候选快照，不再在计数、复用和尺寸查询时反复过滤；尺寸缓存改用结构化键，避免拼接含候选文本的临时字符串。
+- 后续候选分页使用一次全局索引集合完成去重，展开面板布局按 `IndexPath` 索引属性缓存；内存警告会释放可重建的候选尺寸缓存。
+- KeyboardCore 全量测试、99 项 Xcode 工程测试、隔离冷启动 UI 测试及严格 Debug/Release Simulator 构建通过；Device Hub 已完成 Simulator 启动、输入、候选提交与展开验证。物理 iPhone 当前不可用，因此真机持续输入、AirPods 路由与性能结论仍待验收。
+
+## 2026-07-13 — 阶段性保护启动前文本回调
+
+- 物理设备崩溃报告表明 UIKit 可能在 `viewDidLoad` 前发送 `textDidChange`；增加 bootstrap 前保护，避免该回调访问尚未创建的 KeyboardCore controller。后续 Device Hub 验证发现 `viewWillAppear` 仍存在独立的提前到达路径，完整根因与修复记录在 2026-07-14 条目。
+- bootstrap 前的文档变化回调现在会安全忽略；正式 bootstrap 仍会读取当前键盘类型与自动大写上下文，不改变正常输入语义。
+- 通过 iPhone 物理设备崩溃报告定位到 `synchronizeAfterTextChange()`，并完成 Debug 真机构建、安装及 Release 通用 iOS 构建；持续输入仍需真机人工验收。
+
+## 2026-07-13 — 键盘输入热路径优化
+
+- 键盘命中区域改为每次布局后生成一次触控单元快照；正常命中测试直接复用，不再逐次递归发现、排序按键并重设触控背景。
+- Release 构建移除逐键、逐候选的成功明细日志，保留慢输入、慢候选刷新、慢候选预取及失败告警；Debug 继续提供完整时序诊断。
+- 诊断写入器改为按顺序异步批处理，多条记录共用一次格式化和日志存储读写，同时保留条数上限、类别过滤、清空与显式刷新语义。
+- KeyboardCore 全量测试与 Debug/Release Simulator 构建通过；按键边缘、行间空隙和持续中英文输入仍需真机验收。
+
+## 2026-07-13 — 键盘冷启动与系统点击音优化
+
+- 键盘 Extension 改用 UIKit 系统输入点击音，不再创建或激活自己的音频会话，也不再生成 WAV、写临时音频文件或预热双播放器；避免键盘启动主动争抢 AirPods 音频路由。
+- 主 App 移除无法控制系统点击音的五档音量界面，保留独立开关并明确静音、音量和音频路由由 iOS 管理。
+- RIME 健康冷启动改为 schema 选择快速路径，不再枚举全部 schema 或合成 `ni` 功能自测；完整功能验证继续保留在异常恢复路径。
+- 首次显示复用同一设置快照，布局材质开关改为缓存读取，触感关闭时不再预热；Release librime 日志降为 Error/Fatal 且不再创建启动日志目录，逐键成功诊断仅保留在 Debug。
+- 自动化测试和 Debug/Release 构建用于实现验证；AirPods 双设备路由与冷/暖启动性能仍需真机验收。
+
+## 2026-07-13 — 安全的 RIME 自动同步与同步提醒
+
+- 完成一次用户确认的 RIME 标准同步后，默认启用自动同步；用户可改为每天或每 7 天一次，并可随时关闭。
+- 新增 iOS 后台处理任务、键盘活动心跳和本地通知：系统只在合适的空闲机会运行；键盘正在使用、目录授权失效或冷却期未结束时会安全跳过。开始与完成提醒需要用户单独授权。
+- 自动路径继续使用 librime `sync_user_data` 快照合并，不复制运行中的 `*.userdb*`，不自动导入其他设备 YAML，也不进入键盘按键路径。
+- 更新同步、隐私、架构、调试和发布文档，明确后台任务不保证固定时刻或实时完成。
+
+## 2026-07-12 — RIME standard sync as the interoperability path
+
+- Added a main-App-only bridge to librime `sync_user_data` and configured its standard `sync_dir` / installation ID through a user-selected file-provider folder.
+- Made standard sync an explicitly confirmed manual operation: it refreshes managed `.custom.yaml`, merges official user-dictionary snapshots and backs up RIME YAML/TXT without copying live `*.userdb*` files.
+- Kept `universe-rime-sync` as a separate encrypted auxiliary package. WebDAV continues to carry only that private package and is not presented as an interoperable RIME `sync_dir`.
+- Added fail-closed `installation.yaml` preservation checks, clear privacy copy and no-auto-sync boundaries. Physical-device, multi-frontend and configuration-import evidence remain open.
+- Consolidated the two visible sync commands into one staged `立即同步` flow: standard-folder users see RIME user-data sync followed by encrypted private-settings sync, with each state shown through the shared global toast.
+- Coordinated all local-folder and standard-sync writes with `NSFileCoordinator` and the file provider's supplied URL, fixing provider paths that could create folders but rejected saving `format.json` during atomic writes.
+- Added a coordinated write/read/delete preflight before switching standard folders. The file-picker callback now holds the security-scoped directory access through preflight and bookmark persistence, which fixes iCloud Drive selections that could become unavailable after the callback returns. A failed selection pauses sync, retains the old directory only as recovery reference, and records a non-sensitive diagnostic phase/error code instead of silently continuing to the old directory.
+- Moved candidate learning into “数据与同步” as “RIME 用户词典”, aligned the RIME 云同步 icon with the app's neutral settings-icon style, and clarified that cross-device learned-dictionary exchange uses standard RIME sync.
+- Hardened local user-dictionary restore and reset: both now create and verify a distinct recovery backup before modifying live `userdb` files, abort safely on preparation failure, and attempt rollback after a failed replacement.
+
+## 2026-07-12 — Portable encrypted RIME settings sync V1
+
+- Added a main-App-only RIME sync coordinator with deterministic field-level logical versions, unknown-field preservation and conflict-safe retries.
+- Added ChaCha20-Poly1305 end-to-end encryption, a device-local Keychain key, an exportable recovery code and fail-closed handling for wrong keys or damaged packages.
+- Added WebDAV transport with HTTPS enforcement, Basic authentication, ETag conditional writes and remote deletion, plus a security-scoped local-folder transport with atomic writes.
+- Added a native Settings page for provider setup, stable sync status, explicit content scope, recovery information, foreground/manual synchronization and destructive data controls.
+- Kept user dictionaries, Typing Intelligence, diagnostics, Typo learning, typed text and custom YAML files outside V1; keyboard input remains offline and unchanged.
+- Added focused merge, crypto, local-folder, conflict-retry and WebDAV request-contract tests. Real provider, physical-device, accessibility and cross-platform client evidence remain open before Product acceptance.
+
+## 2026-07-11 — Local Typing Intelligence implementation
+
+- Added a final-commit observation contract that classifies committed graphemes into irreversible local aggregates without persisting raw text, candidates, composition or host context.
+- Added a bounded, versioned App Group statistics store with asynchronous coalescing, 365-day retention, corruption recovery and reset-epoch protection against stale queued writes.
+- Added disabled, empty, active and failure-state main-App views for local typing trends, composition, activity, privacy controls and permanent clearing; collection remains disabled by default.
+- Added a top-level Home tab with a single, tappable daily aggregate card that leads to detailed insights.
+- Added target privacy manifests, prohibited-payload tests, exactly-once commit tests, store/model coverage and synthetic Release performance evidence.
+- Preserved RIME, candidate generation and keyboard lifecycle behavior. Physical-device Full Access, process-death, sustained-typing, appearance and final review gates remain open before release acceptance.
+
+## 2026-07-08 — Knowledge OS 2.0 Zero-Context Startup Layer
+
+- Published `KOS-BOOT-001` as the accepted and closed Assignment for Zero-Context Startup governance bootstrap.
+- Added `docs/kos/zero-context-startup.md` to define startup reading order, repository discovery, Work Item/lifecycle/role/repository-truth discovery, startup validation and prompt compression.
+- Linked the startup layer through Knowledge OS navigation and synchronized the Engineering Dashboard closure state without beginning Repository Migration, implementation, Benchmark work or Task 7.
+
+---
+
+## 2026-06-30 — Typo Correction Benchmark Registry v1.0
+
+- Published the accepted `TC-CTR-*`, `TC-CASE-*` and `TC-PERF::*` namespaces as the repository Source of Truth in `docs/TYPO_BENCHMARK_REGISTRY.md`.
+- Added ADR 0009 for independent, versioned Registry ownership and linked benchmark, performance, Partial Commit, navigation and governance documents without copying authority.
+- Preserved historical aliases, independent `nihoa-satisfied`/`nihoa-unsatisfied` Cases, cross-layer coverage rules and the Task 7 prohibition; publication does not claim current evidence passed.
+
+---
+
+## 2026-06-29 — Executable subagent playbooks
+
+- Added nine domain playbooks with explicit mission, scope, forbidden changes, evidence, output, stop, escalation and documentation-impact rules.
+- Separated multi-agent orchestration in `AI_WORKFLOW.md` from executable domain boundaries in `docs/playbooks/`.
+- Connected playbooks to the Knowledge Index, Reading Maps, documentation graph/dependencies and health dashboard without copying architecture facts.
+
+---
+
+## 2026-06-29 — Knowledge OS v1.0
+
+- Added a pure navigation index, task reading maps, documentation graph, dependency routing and change decision trees.
+- Added staged onboarding, a project glossary and an ADR-linked architecture timeline without replacing current architecture sources.
+- Added a reproducible documentation-health dashboard and recorded the current governance debt instead of hiding it.
+- Changed the new-thread entry path to `AGENTS.md` → `docs/KNOWLEDGE_INDEX.md` → `docs/READING_MAPS.md`; retained `CONTEXT_INDEX.md` as the detailed legacy registry.
+
+---
+
+## 2026-06-29 — Documentation governance baseline
+
+- Established one Source of Truth per knowledge category, mandatory documentation triggers, ADR requirements and volatile-data rules.
+- Defined plan lifecycle metadata, changelog boundaries, subagent playbook boundaries and monthly/milestone Knowledge Audit outputs.
+- Connected governance checks to pre-push review without duplicating the full rules across project documents.
+
+---
+
+## 2026-06-29 — Decision lock-in and ADR baseline
+
+- Accepted eight ADRs covering deployment ownership, visibility cleanup, shared-container ownership, RIME sessions, restore safety, transactional schema installation, Full Access/privacy and fallback semantics.
+- Locked the long-term user-dictionary rule: create and verify a safety backup before restore; current implementation remains explicitly tracked as debt.
+- Added a measurement-only Extension performance baseline without invented latency or memory budgets.
+- Added the canonical technical-debt register for schema transactions, `Rime/user` coordination, performance evidence, Full Access degradation, crash/jetsam operations and reproducible RIME artifacts.
+- Adopted the current minimum acceptance matrix: primary development device, current development iOS and one available Simulator; expansion is required before broader TestFlight/App Store release.
+
+---
+
+## 2026-06-29 — Critical documentation stabilization
+
+- Corrected the keyboard visibility contract: returning/disappearing keyboards abandon unfinished composition and marked preedit; runtime session recovery remains a separate in-presentation path.
+- Removed current hardcoded test counts, refreshed README architecture/feature status, and standardized build destinations versus concrete simulator test destinations.
+- Marked completed Lua and typo-correction implementation plans as archived historical references.
+- Added durable documentation for the shared-container/RIME lifecycle, input and marked-text invariants, debugging flows, and release acceptance.
+- Refreshed `CONTEXT_INDEX.md` so future work loads these documents instead of relying on stale summaries.
+
+---
+
+## 2026-06-28 — Typo correction V0.9a/V0.9b transposition value
+
+- Moved eligible adjacent-transposition correction candidates into the near-front area without default first-position promotion.
+- Reused the bounded V0.8b learning store for explicit transposition selections; three selections may enable conservative learned promotion under existing assessment and prefix guards.
+- Preserved the normal-RIME satisfaction gate: when RIME already returns the corrected best candidate first, the entire transposition suggestion remains suppressed.
+- Kept Release defaults off and kept substitution, deletion, rejected, and multi-edit corrections outside local learning.
+- Validated on a real device that `zohngguo -> 中国` enters the front area, accumulates local selections, reaches first position after repeated explicit choices, and preserves the `nihoa` normal-RIME suppression path.
+
+---
+
+## 2026-06-28 — Typo correction V0.9 transposition preflight
+
+- Added a long-pinyin transposition audit case, `zohngguo -> zhongguo -> 中国`, because real RIME already handles the original `nihoa -> 你好` example in some environments.
+- Suppressed the entire corrected-input suggestion when normal RIME already returns the corrected best candidate first, preventing low-value secondary candidates such as `拟好` or `你号` from leaking into the candidate bar.
+- Added assessment-level short-input protection and kept transposition Debug-only, display-only, non-promoting, and excluded from V0.8b local learning.
+
+---
+
+## 2026-06-28 — Typo correction V0.8b local selection learning
+
+- Added bounded, local learning for explicit insertion-correction selections without writing RIME weights, schemas, user dictionaries, surrounding text, or telemetry.
+- Kept V0.8a ranking as the default: early selections only prioritize near-front correction candidates, while three explicit selections can promote an eligible insertion correction under conservative prefix guards.
+- Added 90-day expiry, a 64-record limit, malformed-store fallback, and a Debug-only reset action on the smart-correction page.
+- Kept substitution, deletion, transposition, multi-edit, rejected corrections, and Release-default behavior outside V0.8b learning.
+- Validated on a real device that repeated explicit selection moves `niho -> 你好` to first position without regressing existing normal-input behavior.
+
+---
+
+## 2026-06-21 — Typo correction internal experiment switches
+
+- Added Debug-only main-App switches for local insertion and transposition typo correction experiments, so real-device validation no longer requires temporary code edits.
+- Kept Release behavior stable: experiment keys are ignored outside Debug builds and all experimental typo edits remain disabled by default.
+- Wired the Keyboard Extension to refresh experiment settings through the existing App Group settings path, without changing RIME, candidate UI, ranking rules, or production typo behavior.
+
+---
+
+## 2026-06-21 — Typo correction V0.8a insertion display value
+
+- Made eligible conservative near-final insertion correction candidates rank near the front when the experimental insertion flag is enabled, without allowing first-position promotion.
+- Kept production typo correction defaults unchanged and kept transposition benchmark-only.
+- Added ranker regression tests for insertion near-front placement and transposition non-promotion.
+
+---
+
+## 2026-06-21 — Typo correction V0.8 staging plan
+
+- Recorded the V0.8 flag-on real-device finding: `niho -> nihao` is safe but appears too far back in the candidate list, while `nihoa -> 你好` is already handled by normal RIME behavior on device.
+- Split the next insertion work into V0.8a front-display optimization and V0.8b local correction-selection learning, keeping both separate from RIME weights, RIME user dictionaries, telemetry, and production defaults.
+
+---
+
+## 2026-06-21 — Typo correction experimental audit gate
+
+- Added a local flag-on audit for default-off V0.8/V0.9 insertion and transposition experiments, keeping production typo correction behavior unchanged.
+- Extended the main-App 智能纠错 page with a read-only "实验开关审计" section that reports target coverage, normal-input regression, false positives, dangerous corrections, and device-validation readiness.
+- Documented that passing the audit only qualifies a feature for real-device validation; it does not approve production enablement.
+
+---
+
+## 2026-06-21 — Typo correction V0.6 quality gates
+
+- Added a pure KeyboardCore benchmark evaluator and result model so smart-correction coverage can be checked without runtime telemetry or real user input.
+- Extended the main-App 智能纠错 page with a local read-only evaluation section showing pass status, expected/actual results, confidence, promotion, and assessment reason.
+- Added assessment reason summaries and default-off experimental edit flags for future insertion and transposition validation without changing production keyboard behavior.
+- Documented the V0.6-V0.9 quality-gate roadmap and kept RIME schema, RIME weights, candidate UI, and Typo Partial Commit defaults unchanged.
+
+---
+
+## 2026-06-21 — Typo correction V0.5 prioritized recall
+
+- Prioritized safe single-edit typo suggestions before applying the fixed lookup window, so long-pinyin back-half mistakes such as `zhonghuo -> zhongguo -> 中国` can be resolved without increasing hot-path lookup volume.
+- Preserved existing safety boundaries: no omitted-character, transposition, multi-edit, RIME schema, RIME weight, ranking, or candidate UI changes.
+- Updated the smart-correction benchmark and read-only main-App explanation page to mark `zhonghuo -> zhongguo` as supported near-front coverage.
+- Added the V0.5 prioritized-recall plan for future benchmark-driven typo correction work.
+
+---
+
+## 2026-06-21 — Typo correction V0.4 scoring and benchmark UI
+
+- Added an explicit typo-correction assessment model for confidence tier, score, display eligibility, promotion eligibility, and reject reasons.
+- Kept RIME weighting and typo scoring separate: RIME continues ranking candidates for the same input code, while typo correction only decides whether a corrected input code can contribute an optional side-channel candidate.
+- Added a read-only main-App 智能纠错 page that explains local correction behavior, benchmark examples, scoring principles, unsupported boundaries, and the relationship to RIME candidate learning.
+- Documented the V0.4 plan and updated the typo benchmark with assessment tiers and rejection reasons.
+
+---
+
+## 2026-06-21 — Typo correction V0.3 coverage
+
+- Expanded the KeyboardCore typo-correction engine from final-character-only substitution to conservative all-position single-character adjacent-key substitution, covering examples such as `bihao -> nihao` and `nigao -> nihao`.
+- Kept correction behavior benchmark-driven and optional: corrected inputs must still resolve through the candidate provider/RIME flow, and normal RIME candidates remain preserved.
+- Added conservative ranking so final high-confidence corrections can still be promoted ahead of longer expansions, while initial and middle corrections enter the front area without blindly replacing the normal top candidate.
+- Preserved safety boundaries: repeated-final deletion remains conservative, very short inputs are protected, and omitted characters, transpositions, multi-edit corrections, and unsafe non-final consonant/vowel cross-class replacements remain unsupported.
+- Refined correction-candidate rendering so a first-position correction uses the same preferred candidate emphasis while showing the typo hint as a small secondary label instead of truncating the candidate text.
+- Documented the V0.3 coverage plan and updated the typo benchmark to distinguish typo correction from traditional RIME fuzzy pinyin and Lua advanced input.
+
+---
+
+## 2026-06-19 — Advanced input settings and Settings cleanup
+
+- Added a shared advanced-input settings model for user-facing features such as 日期与时间、计算器、数字大写、随机编号, and candidate optimization without exposing internal Lua component names in the UI.
+- Added a global Advanced Input settings page that disables controls when the active scheme does not support them, while preserving the user's choices for supported schemes.
+- Added plain-language usage guidance for advanced input examples such as date/time shortcuts, calculation results, number formatting, random identifiers, and special content.
+- Reorganized the main Settings tab into clearer sections for input experience, input schemes, tools, and diagnostics.
+- Moved diagnostic logging controls into a second-level diagnostics settings page so the Settings tab keeps only one entry point.
+- Fixed the app appearance setting to update the active root view reliably and migrated any previous standard-defaults value into the shared settings store.
+- Split the `rime_ice` advanced-input settings and diagnostics links into separate Form rows to avoid overlapping tap targets.
+- Made deployment apply advanced-input preferences before full RIME deployment, preserving a restorable source schema so disabled features can be turned back on without redownloading.
+- Expanded dynamic-input diagnostics and compatibility post-processing to cover the full processor/segmentor/translator/filter component family.
+- Prevented app launch/settings refresh from showing a stale "RIME 设置已生效" toast when the app merely reads an already-deployed state from shared storage.
+- Removed the duplicate Advanced Input entry from the RIME scheme settings page; advanced-input switches now stay in the main Settings tab while scheme pages focus on scheme state and recovery actions.
+- Kept number and calculator-style symbol keys inside the active Chinese RIME composition so inputs such as `N20260619` and `cC1+2` are not split by the symbol page, while ordinary punctuation still commits the current candidate first.
+- For ordinary pinyin followed by number-page digits, keep the inline preedit as raw input such as `nihao123` while showing the transformed first candidate such as `你好123`, avoiding librime's default number-key candidate selection until the user confirms.
+- Preserved raw-input deletion and highlighted candidates for ordinary pinyin-number suffix input, so `nihao123` deletes as `3`, `2`, `1`, `o`... while the candidate bar updates or clears at the right composition boundary.
+- Updated RIME scheme-management docs, the Lua capability plan, and the Swift 6 manual acceptance record with the partial physical-device Lua smoke evidence and remaining coverage gaps.
+
+---
+
+## 2026-06-18 — RIME Lua diagnostics and deploy module alignment
+
+- Added a main-App `rime_ice` Lua capability diagnostic that distinguishes unavailable engine support, stripped schema files, missing Lua files, pending deployment, inactive schema, and ready states without touching the keyboard input path.
+- Exposed RimeBridge Lua capability metadata so tests and main-App diagnostics can verify the compiled bridge and deployment module list.
+- Aligned `RimeDeployer` with the keyboard session engine by loading the `lua` module under `RIME_HAS_LUA` during full main-App deployment.
+- Added a conservative "高级输入功能" status section on the `rime_ice` detail page with recovery actions for selecting the scheme, reapplying RIME settings, redownloading incomplete files, and opening diagnostics.
+- Documented the scheme-detail status boundary in `docs/RIME_SCHEME_MANAGEMENT.md`; the UI says "基础检查通过" instead of claiming Lua dynamic candidates are fully available before real smoke testing.
+- Expanded Lua file diagnostics to derive required `lua/*.lua` files from schema `lua_processor` / `lua_translator` / `lua_filter` references.
+- Cleared scheme-specific RIME build cache entries before forced redownloads so old compiled artifacts do not mask recovered schema files.
+- Added an opt-in iOS Simulator Lua smoke-test skeleton gated by `UK_RIME_LUA_SMOKE_SHARED_DIR` and `UK_RIME_LUA_SMOKE_USER_DIR`; it skips without a real runtime fixture.
+- Added simulator and service tests for deployment module coverage and the new Lua diagnostic states.
+- Recorded the staged 雾凇拼音 Lua implementation plan in `docs/plans/rime-ice-lua-full-capability-plan.md`; real Lua smoke testing remains pending.
+
+---
+
+## 2026-06-14 — RIME scheme operation feedback V1.2
+
+- Added a shared in-flight operation state for scheme-side effects such as checking updates, downloading, redownloading, and uninstalling.
+- Prevented repeated taps from starting duplicate scheme operations; repeated taps while a scheme operation or download is active now show a throttled global toast instead of creating extra tasks.
+- Added loading labels and disabled states to scheme management buttons while an operation is running.
+- Moved scheme operation results into the global bottom toast, including up-to-date, update-check failure, download start/completion/failure, redownload start, and uninstall completion messages.
+- Split update checking into explicit results for update available, already current, and failed, so network failures no longer look like "already current".
+- Added regression coverage for duplicate update taps, update-check failure release, and uninstall toast/release behavior.
+
+---
+
+## 2026-06-14 — RIME multi-scheme management V1.1 infrastructure
+
+- Added a catalog-backed RIME scheme model covering scheme metadata, download distribution, storage keys, license metadata, user-dictionary capability, and installation plans.
+- Moved rime_ice download, version, ETag, installation, uninstall, and update checks onto generic schema-ID based manager methods while preserving the existing user-facing 雾凇 behavior.
+- Generalized archive installer boundaries so cache paths, extraction directories, installed-file checks, install filters, uninstall cleanup, and build-cache cleanup come from each scheme's installation plan.
+- Kept the V1 list/detail UI visually stable while making download cards, license acceptance, update checks, redownload, and uninstall actions use the current scheme metadata and schema ID.
+- Expanded SchemaManager coverage to assert catalog metadata reaches the scheme list and kept the existing update, install, uninstall, and deployment tests passing.
+
+---
+
+## 2026-06-14 — RIME multi-scheme management V1
+
+- Reworked the main RIME settings page into a scalable scheme list with per-scheme detail pages, preparing the UI for more open-source schemes without making the top-level settings page long.
+- Moved scheme-specific actions such as setting the active scheme, downloading, updating, redownloading, uninstalling, and viewing the license into the matching scheme detail page.
+- Kept global RIME preferences and deployment status on the top-level RIME settings page because they apply across schemes rather than belonging to one scheme.
+- Added compact per-scheme status text and icons for current, installed, downloadable, downloading, and failed states.
+- Documented the V1 scheme-management structure and future extension rules in `docs/RIME_SCHEME_MANAGEMENT.md`.
+
+---
+
+## 2026-06-13 — RIME candidate learning V1.1 backup basics
+
+- Refined the candidate learning settings page with plain-language status text for whether learning is on, whether there is anything learned, and whether a backup exists.
+- Added per-schema local backup and latest-backup restore actions for the built-in `luna_pinyin` scheme and the downloaded `rime_ice` scheme.
+- Added backup manifests so the settings page can disable redundant backups when the latest backup already matches current learning data.
+- Added an off-by-default automatic backup switch that runs only from the main App at low-risk moments and skips duplicate backups.
+- Reworked the candidate learning UI into a scalable scheme list with per-scheme detail pages, so future open-source schemes do not repeat across multiple long sections.
+- Moved candidate-learning operation feedback into the shared global bottom toast and kept scheme rows focused on short status text plus a compact status icon.
+- Made restore replace the matching scheme learning data and mark RIME for the same automatic main-app apply flow used by candidate learning and fuzzy pinyin settings.
+- Added regression coverage for backup, restore, no-backup, status-copy, and file-level `{schema}.userdb*` restore behavior.
+
+---
+
+## 2026-06-13 — RIME candidate learning settings
+
+- Added a main Settings entry for candidate learning, covering the built-in `luna_pinyin` scheme and the downloaded `rime_ice` scheme separately.
+- Added per-schema user dictionary learning switches that write `translator/enable_user_dict` into schema custom YAML during the main-app deployment path.
+- Added per-schema learning-record reset actions that remove only the matching `{schema}.userdb*` data from the App Group RIME user directory.
+- Extended the pending-deploy flow so candidate-learning changes use the same automatic apply behavior and global bottom toast as fuzzy pinyin settings.
+
+---
+
+## 2026-06-13 — RIME fuzzy pinyin UX refinement
+
+- Moved fuzzy pinyin settings out of the RIME scheme page and into the main Settings page as an input-habit preference.
+- Added a master fuzzy pinyin switch while preserving detailed `zh/z`, `ch/c`, `sh/s`, and `n/l` preferences.
+- Replaced the fuzzy page deploy button with pending-deploy scheduling on page exit/app lifecycle, guarded by a fuzzy settings deployment signature to avoid unnecessary redeploys.
+- Added a main-app global bottom deployment toast for RIME applying/success/failure states; the Keyboard Extension continues using the last compiled config and does not block input while deployment is pending.
+- Refined the RIME scheme management UI with non-cramped two-column action buttons and made the scheme deployment page rely on the shared global deployment toast for transient progress/results.
+- Added a reusable `AppActionButton` so main-app content actions share one Liquid Glass style across RIME download, deployment, retry, reset, destructive management, and license acceptance flows.
+
+---
+
+## 2026-06-13 — RIME fuzzy pinyin Phase 1
+
+- Added traditional RIME fuzzy pinyin settings for `zh/z`, `ch/c`, `sh/s`, and `n/l`, defaulting the four common initial-consonant groups to enabled.
+- Added active-schema-only deployment post-processing that preserves existing `speller/algebra` rules and manages only the `# universe:fuzzy-pinyin begin/end` block.
+- Added a dedicated main-app fuzzy pinyin settings page; toggles save App Group settings and mark RIME as needing redeploy instead of compiling on every change.
+- Documented the separation between RIME fuzzy pinyin and small-screen typo correction in `docs/RIME_FUZZY_PINYIN.md`, `CONTEXT_INDEX.md`, and `docs/TYPO_BENCHMARK.md`.
+
+---
+
+## 2026-06-13 — Context-aware symbol page input
+
+- Added a main App input setting for paired-symbol auto-completion, stored as `paired_symbol_completion_enabled` and defaulting to enabled.
+- Strengthened number/symbol page one-shot behavior with mode-specific whitelists: Chinese mode uses `；（）@“”。，、？！【】｛｝#%^*+=_\｜《》&·`, while English mode keeps half-width punctuation such as `.` as one-shot.
+- Fixed Chinese-mode ASCII period and non-composition `‘` handling so they no longer return to letters, while symbols such as `#`, `（`, and `“` do.
+- Added digit-key protection so symbol-page numbers never auto-return to letters.
+- Added paired-symbol insertion for left paired marks such as `（`, `“`, `【`, `｛`, and `《`, placing the cursor between the inserted pair when the setting is enabled.
+- Chinese composition now stays alive when switching from letters to the number page; pressing ordinary punctuation commits the first RIME candidate before inserting the symbol, while active-composition `‘` is routed to RIME as an apostrophe separator for inputs such as `wa'o` and then returns to letters.
+- Fixed Partial Commit + paired-symbol ordering so selecting a prefix candidate and then pressing a left paired symbol commits the remaining first candidate before inserting the pair, for example `还找` + `（` becomes `还找得到（|）`.
+- Cleared stale candidate presentation when symbol input both commits composition and returns to letters, so the candidate bar reflects the same state as a first-candidate confirmation.
+- Expanded KeyboardCore regression coverage for empty-context symbols, digit symbols, paired-symbol cursor placement, RIME composition + punctuation commit, and the Chinese apostrophe separator path.
+
+---
+
+## 2026-06-12 — Marked text composing underline
+
+- Replaced the plain inline preedit rewrite path with `UITextDocumentProxy.setMarkedText(_:selectedRange:)` / `unmarkText()`, allowing host text fields to show the system composing underline for active Chinese input.
+- Return now commits non-partial RIME composition using `rawInput` instead of display `preeditText`, so segmented preedit such as `ni h` confirms as `nih` and clears the underline.
+- Number and symbol pages now behave as one-shot symbol layers: after a normal symbol is inserted from either page, the keyboard returns to the letters page while preserving Chinese/English input mode.
+- Kept active Partial Commit displays marked until final commit, so selected Chinese segments and the remaining preedit stay visually connected as one unfinished composition.
+- Added `TextInputClient` marked-text methods and expanded `FakeTextInputClient` test state so unit tests can distinguish visible text from still-marked composition text.
+- Updated regression coverage for normal RIME commits, unknown raw commits, segmented RIME Return commits, Partial Commit, typo Partial Commit, delete restore, mode switch, Return, direct text insertion, one-shot symbol pages, and final-commit fallback paths.
+
+---
+
+## 2026-06-11 — Candidate touch hit-area hardening
+
+- Fixed candidate-gap hit testing in the Keyboard Extension by keeping `UICollectionView` item spacing at zero, preserving the visual gap inside each cell, and retaining a nearly invisible cell backing so the apparent gap is still a valid pan start area on real devices.
+- Removed visible red diagnostic backgrounds from candidate cells and expand/collapse chevrons. Candidate touch diagnostics now remain log-only for visuals, so enabling display diagnostics no longer changes the touch surface being tested.
+- Expanded the real hit area for the candidate expand/collapse chevrons through button hit testing and invisible backing, preserving the native-looking chevron while improving tap and downward-swipe reliability.
+- Applied the same hit-area principle to the key input region across text, symbol, bottom-row, and emoji insertion keys: visual key spacing stays unchanged, while the root keyboard stack splits dead-space touches at adjacent midlines into per-key touch cells, keeps a nearly invisible backing surface always active without red debug overlays, and keeps forwarded touches valid through key tracking.
+
+## 2026-06-09 — Liquid Glass keyboard appearance tuning
+
+- Adapted the keyboard presentation toward the iOS 26/27 system rounded keyboard container while avoiding a second custom rounded surface inside the extension.
+- Added a main-app experimental switch for the material-based Liquid Glass path, but kept the default keyboard path conservative so visual regressions can be compared against the system-provided container.
+- Reduced the candidate bar height and tightened the candidate/top spacing while keeping key row heights, input logic, RIME, feedback, and delete behavior unchanged.
+- Final visual tuning lowers the keyboard by trimming only content insets (`top 2pt`, `bottom 0pt`) while preserving input-row height and candidate-bar height; candidate text was increased slightly for readability.
+- Removed the candidate/key separator and expanded the candidate chevron hit area to make candidate expansion easier to trigger.
+- Fixed an iOS 26 candidate-list washout: `UICollectionView` inherits `UIScrollView` edge effects, and the new `UIScrollEdgeEffect` visually added a rectangular fade/overlay over the first candidate row. Candidate scroll views now hide all four scroll edge effects on iOS 26+.
+- Candidate cells now render with a plain `UILabel` plus an explicit highlighted background view instead of `UIButton.Configuration`, keeping candidate text rendering independent from system button/material compositing.
+- Real-device validation confirmed the horizontal candidate overlay disappeared after disabling candidate scroll edge effects.
+
+---
+
+## 2026-06-07 — Feedback UX Phase 1
+
+- Replaced continuous key click and haptic controls with independent switches plus five discrete levels: light, softer, normal, stronger, and heavy.
+- Added `KeyboardFeedbackSettings` as the shared feedback settings model, including `KeyboardFeedbackEvent` (`tap`, `modeEnter`, `repeat`, `commit`, `preview`) and migration from legacy `key_click_volume` / `haptic_intensity` values without deleting the old keys.
+- Rebuilt the main-app feedback settings UI around list-based level selection with automatic preview, same-level suppression, and preview throttling to avoid click or haptic bursts during rapid changes.
+- Added a clear `modeEnter` haptic when space long-press actually enters cursor movement mode; cursor movement itself remains silent.
+- Completed Delete Repeat UX Phase 1.1: delete speed stays unchanged, repeat feedback is emitted only after an effective delete, empty-field long press is silent after the first tap feedback, click feedback is more frequent than haptic feedback, and repeat click keeps an independent `tapVolume * 0.60` multiplier.
+- Tuned key click audio for long-session comfort: final `ClickSoundGenerator` uses a short native-style 9ms click with 1450Hz fundamental, 2900Hz light harmonic, low noise, softened attack/decay, and a reduced five-level volume curve (`0.15 / 0.24 / 0.36 / 0.48 / 0.60`).
+- Real-device validation completed across normal typing, long-press delete, settings preview, and heavy-level click tuning; the final target is light, short, restrained feedback that confirms typing without taking over the interaction.
+
+---
+
+## 2026-06-07 — Native-style symbol page layout refresh
+
+- Reworked Chinese and English number/symbol pages to match native keyboard ordering more closely while keeping the V1 frozen geometry constants unchanged.
+- Added first-level and second-level symbol rows with function-wrapped third rows (`#+=` / `123` on the left, Delete on the right) and shared non-letter bottom rows (`拼音` or `English`, emoji, space, dynamic Return).
+- Switched emoji page buttons to a template SF Symbol so they follow the same text color as other function keys instead of rendering as a colored emoji glyph.
+- Added an English smart double-quote key: the visible `”` key inserts `“` first, then `”`, and returns to opening behavior after the surrounding quotes are deleted from the input context.
+- Added a visible `^_^` kaomoji entry point on the Chinese second-level symbol page as a placeholder for a future candidate-bar kaomoji picker.
+
+---
+
+## 2026-06-05 — Partial Commit milestone closure
+
+- Documented the completed Partial Commit milestone across normal RIME candidates, Delete restore, typo correction Partial Commit V1, and Phase 3 V2 stabilization.
+- Recorded the current product decision: typo correction Partial Commit keeps Delete restore behavior for now, with no further optimization until English input mode architecture is revisited.
+- Added `docs/architecture/partial-commit.md` as the architecture and merge-readiness reference, including feature flag status, known boundaries, and recommended squash-merge/tag strategy.
+
+---
+
+## 2026-06-05 — Typo correction Partial Commit Phase 3 V2 stabilization
+
+- Expanded stabilization coverage for typo correction Partial Commit without changing typo generation, ranking, UI, or the default-off feature flag.
+- Added regression coverage for full-commit fallback boundaries: repeated-final deletion, multi-edit corrections, missing corrected candidates, no remaining composition, and typo correction selection during an active partial commit.
+- Added lifecycle and parity coverage for final candidate commit, space/return/direct-text commit, visibility recovery, and candidate paging while typo partial commit is active.
+- Clarified feature-flag exit requirements and documented that intermediate-syllable typo correction remains outside the current typo engine scope.
+
+---
+
+## 2026-06-05 — Typo correction Partial Commit Phase 3 V1
+
+- Completed a default-off internal path for typo correction candidates to reuse the existing Partial Commit pipeline.
+- Typo correction partial commit preserves the exact original typo input as the Delete restore target, continues composition through the corrected RIME input, and invalidates the checkpoint after continued typing.
+- Real-device validation passed for flag-off regression behavior and flag-on typo partial commit, Delete restore, and checkpoint invalidation.
+- Known boundary: V1 only supports typo correction candidates already produced by the current typo engine. Intermediate-syllable typo correction, such as `nihapanpai -> nihaoanpai`, is not implemented and belongs to a later phase.
+- Added regression coverage for flag-off full commit behavior, repeated-final deletion exclusion, corrected-candidate fallback, and real RIME-style selected-segment preedit.
+
+---
+
+## 2026-06-04 — Reversible partial commit for RIME candidates
+
+- Added normal RIME partial commit for selecting a shorter candidate inside an active composition, e.g. `nihaoanpai -> 你好an pai`.
+- First Delete restores the previous raw composition and candidate list by rebuilding the RIME session from raw input; subsequent Delete resumes normal RIME deletion.
+- Real-device validation confirmed no duplicate selected segment, restored `你好安排` candidates after undo, and normal candidate refresh after the second Delete.
+
+---
+
+## 2026-06-03 — Partial Commit Phase 1 infrastructure
+
+- Added RIME raw-input and candidate-page contracts, plus a `replaceInput` capability for future composition restoration.
+- Added stable candidate selection reference metadata and a single-checkpoint `PartialCommitState` model without changing candidate, Delete, UI, or typo-correction behavior.
+
+---
+
+## 2026-06-03 — Segmented RIME preedit typo correction
+
+- Normalized display-oriented segmentation spaces in real RIME preedit before typo matching and corrected-candidate lookup.
+- Verified on a real device that `nihap -> nihao -> 你好` appears as a correction candidate, commits immediately, clears composition, and no longer continues matching `安排`.
+
+---
+
+## 2026-06-03 — Feedback settings and RIME management reliability
+
+- Persisted keyboard sound and haptic settings through the shared App Group store, refreshed extension-side cached values when the keyboard appears, and documented the Allow Full Access dependency for shared settings and diagnostics.
+- Separated RIME update checks from forced redownloads: update checks now compare the installed release tag and report when rime_ice is already current, while redownload always starts a fresh download.
+- Removed temporary runtime diagnostics after validating the App Group and deployment paths.
+
+---
+
+## 2026-06-02 — Typo correction benchmark reference
+
+- Added `docs/TYPO_BENCHMARK.md` as the benchmark reference for fuzzy pinyin typo correction coverage, scoring principles, known unsupported categories, and next milestone guidance.
+- Linked typo correction work in `CONTEXT_INDEX.md` and added a long-term `CLAUDE.md` note requiring future correction rules, ranking, and UI work to use `TypoCorrectionTests` plus the benchmark document as the source of truth.
+
+---
+
+## 2026-06-01 — Keyboard UI V1 freeze
+
+- **Frozen layout baseline**: `candidateBarHeight=44`, `keyHeight=45`, `keySpacing=8`, `keyboardGroupSpacing=10`, `keyHorizontalSpacing=6`, `thirdRowFunctionSpacing=10`, `primaryFunctionKeyWidth=46`, `functionKeySymbolPointSize=18`, horizontal margins `7`, `keyCornerRadius=9`.
+- **Input feedback baseline**: standard keys emit visual press state, haptic feedback, and key click together from touch-down. Candidate commits and long-press variant commits use the shared feedback helper at commit time. Key click playback keeps the overlapping rapid-typing behavior.
+- **V1 UI freeze rule**: keyboard UI is frozen unless a major usability issue is found. Future UI changes must cite a specific usability reason such as mistouch reduction, clipping, accessibility, or interaction regression.
+- **Manual verification checklist captured**: slow typing, rapid typing, repeated function keys, long-press delete, edge keys, candidate commits, and accessibility labels.
+
+## 2026-05-25 (evening) — 候选栏滑动检测重构
+
+- **三层滚动检测**: ① `scrollViewDidScroll` 用百分比阈值（>60% 可滚宽度）替代绝对距离 ② `scrollViewWillEndDragging` 预测性触发（Apple 推荐方式，在 deceleration 开始前触发）③ `scrollViewDidEndDragging` overscroll 兜底（>30pt）
+- **百分比阈值更可靠**: 候选栏/展开面板统一用 `progress = offset / max(1, scrollableWidth)` > 0.6，不受设备宽度或候选数量绝对值影响
+- **新增 6 个 loadMore 流程测试**: pageDown/pageUp 恢复、composing 状态保持、去重逻辑、预加载流程、多次翻页回到页1、深度追踪
+
+**Key Lessons:**
+- 百分比阈值优于绝对距离。80pt 阈值在不同设备/不同候选数量下表现不一致，60% 可滚宽度是通用解法。
+- 三层检测（scroll + willEndDrag + didEndDrag）互补覆盖所有滚动场景。单靠 `scrollViewDidScroll` 可能在快速滑动时漏检。
+
+---
+
+## 2026-05-25 (afternoon) — 关键 Bug 修复
+
+- **Bug 1 (候选栏滚动后空格失效)**: 预加载和 `loadMoreCandidates` 使用 `controller.handle(.candidatePageDown)` 污染了 `state.lastRimeOutput`（从第1页变为第2/N页）。修复：直接用 `engine.pageDown()`/`pageUp()`，不经过 controller。添加 `candidatePageDepth` 跟踪深度，每次加载后回到第1页。`handleInsertSpace` 改为从 `lastRimeOutput.candidates.first` 直接取最佳候选提交。
+- **Bug 2 (首候选背景拉伸)**: 候选栏 `UIStackView` 的 `.fill` distribution 导致单按钮被拉伸至整行宽。修复：在 `fillCandidateBar` 和 `appendToCandidateBar` 末尾添加 low-hugging trailing spacer。
+- **Bug 3 (选择候选后删除键重现拼音)**: `handleInsertCandidate` fallback 路径没有调用 `engine.resetSession()`，RIME 残留旧 composition。删除时 `isComposing()` 仍返回 true → 从残留拼音删除 → 重现旧拼音。修复：fallback 路径添加 `rimeEngine?.resetSession()`，`handleInsertSpace` 所有分支都确保重置。
+- **Bug 4 (应用切换后无候选词)**: 键盘挂起恢复后 RIME session 可能失效，`viewDidAppear` 未做检查。修复：`viewDidAppear` 调用 `engine.resetSession()` + 清空累积状态。
+- 新增 7 个回归测试。Test suite at this point: 341 → 347 tests, 0 failures.
+
+**Key Lessons:**
+- 预加载/翻页必须直接用 engine，不能经过 `controller.handle`。`controller.handle(.candidatePageDown)` 会更新 `state.lastRimeOutput`，破坏 UI 层依赖的"第1页"假设。UI 层翻页累积候选词 ≠ RIME 引擎翻页改变内部状态，两者必须解耦。
+- 所有候选/空格提交路径都必须 `engine.resetSession()`。无论是 RIME 路径还是 fallback 路径，提交后残留 composition 会导致下次删除从旧拼音删除、重现候选词。
+- `.fill` distribution 的 UIStackView 不能有单按钮行。每行末尾加 trailing spacer 是最简单的防御措施。
+- `viewDidAppear` 是键盘恢复的最后防线。应用切换后 session 可能丢失，在这里重置保证干净状态。→ *Promoted to Key Design Decisions in CLAUDE.md.*
+
+---
+
+## 2026-05-25 (morning) — 候选栏交互全面重构 + Apple HIG 合规
+
+- **Candidate bar swipe-based pagination**: Removed ◀ ▶ page buttons. Infinite horizontal scroll with auto-load: user scrolls right → near-edge detection triggers RIME page-down → new candidates appended via `appendToCandidateBar()` (no clear+rebuild flash). `scrollViewDidScroll` near-right-edge detection (80pt) + `scrollViewDidEndDragging` overscroll fallback (40pt).
+- **Pre-load 2 pages**: `refreshCandidateBar()` immediately fetches RIME page 1 + page 2 on new input, showing ~18 candidates upfront. `loadMoreCandidates()` appends subsequent pages on demand.
+- **Expanded panel redesign**: Flow layout replaces fixed 4-column grid. Buttons wrap naturally by text width, trailing spacers prevent `.fill` distribution stretch. Panel fills entire keyboard area (252pt, candidate bar disappears when expanded). Collapse button (chevron.up, 44×44pt) floats top-right above scrollView. Vertical infinite scroll with bottom-edge detection (80pt).
+- **Fade mask refined**: Gradient range 82%→92%, last candidate almost fully visible.
+- **Apple HIG P0 (Touch Targets)**: `candidateBarHeight: 36→44` (≥44pt). Expand/collapse buttons: 34×36→44×44pt.
+- **Apple HIG P0 (VoiceOver)**: All candidate/expand/collapse buttons have `accessibilityLabel` + `accessibilityHint`. Composition items read "提交拼音 X".
+- **Apple HIG P1 (Dynamic Type)**: `UIFontMetrics(forTextStyle: .body).scaledFont(for:maximumPointSize: 28)` replaces hardcoded `systemFont(ofSize:)`.
+- **Apple HIG P2 (Semantic colors + 8pt grid)**: Highlighted background uses `.systemGray3`/`.systemGray6`. Candidate stack spacing 3→4pt, highlighted insets 6→8pt, vertical panel spacing 5→4pt.
+- **Apple HIG P3 (Spring animation + indicator)**: Chevron rotation uses `usingSpringWithDamping: 0.75` spring. "More" indicator `⋯` (U+22EF, `.quaternaryLabel`) appended when `hasMoreCandidates`, removed when exhausted.
+- **KeySpacing split**: `keySpacing: 8` (vertical between rows) + `keyHorizontalSpacing: 6` (horizontal within rows). Total height 250→258pt.
+- Test suite at this point: 347 KeyboardCore tests, 0 failures.
+
+---
+
+## 2026-05-22 (afternoon) — Flickering 修复 + Session 自动恢复
+
+- **Flickering fix (current approach)**: `view.alpha = 0` in `viewDidLoad` + height-triggered reveal in `viewDidLayoutSubviews`. After `viewDidAppear`, the first layout pass with `view.bounds.height` in range (0, 400) sets `view.alpha = 1`. This waits until the 3-phase resize settles to the final height (250pt on iPhone 13 Pro). The intermediate heights (844pt, 445pt) are filtered out by the `< 400` guard.
+- **RIME session auto-recovery**: `RimeSessionManager.processKey` now detects `sessionId == 0` and automatically calls `create_session()` + `select_schema()` to recover, instead of returning empty output.
+- **Expanded candidate panel height capped**: `makeExpandedCandidatePanel()` container constrained to `keyHeight * 4 + keySpacing * 3` (194pt). Overflow candidates scroll vertically in `UIScrollView`.
+- **Logger category enhancement**: Added `Category.display` (DISP). Per-category toggle switches in settings (性能/画面/引擎/配置/部署/通用). `DiagnosticsView` with category filter chips and color-coded log lines (ERROR=red, WARN=orange, PERF=blue, DISP=purple).
+- **iPhone 13 Pro**: Primary test device. Final keyboard view height: 258pt (may vary 216–268pt). Layout constants: `candidateBarHeight=44`, `keyHeight=44`, `keySpacing=8` (vertical), `keyHorizontalSpacing=6` (within-row), `keyCornerRadius=9`, horizontal margins 4pt. `preferredContentSize=258pt`.
+- **RIME session diagnostics**: NSLog in `RimeSessionManager.m` for `processKey(sessionId=0)`, `createSession`, `destroySession`, plus `select_schema` after auto-recovery.
+
+**Flickering approaches attempted and discarded:**
+1. *Alpha=0 + fadeInKeyboardIfNeeded()* (original): iOS presentation animation overrides `view.alpha=0` during the 3-phase resize, causing half-screen flash at 445pt.
+2. *Mask overlay*: solid-color mask view covered keyboard content. Mask itself visibly changes size 844→445→250pt — user sees the mask shrinking.
+3. *Bottom-anchored layout*: rootStack pinned to view bottom with fixed height. Failed because final view height varies (216–250pt), and fixed content height either clips or leaves too much empty space.
+4. *Async alpha in viewDidAppear*: `DispatchQueue.main.async` not guaranteed to land after the final layout pass.
+5. *Current approach*: top+bottom pinning (original layout) + `view.alpha = 0` + height-triggered reveal. ✅ Simplest solution that works.
+
+---
+
+## 2026-05-21 (evening) — 性能与稳定性优化
+
+- **Keyboard flickering mitigation**: `view.alpha = 0` + height-stability-detection fade-in (via `fadeInKeyboardIfNeeded()`) to mask iOS system's 3-phase keyboard resize (full-screen → intermediate → final). Apple DTS confirmed no API can prevent the resize itself.
+- **Candidate bar simplified**: Removed button reuse + associated-object tracking (`objc_getAssociatedObject` Bool bridging issue). Replaced with simple clear-rebuild each refresh. 20-button creation <0.5ms vs RIME 2–5ms — negligible.
+- **Enter key chat-app adaptation**: `updateReturnKeyAppearance()` checks `textDocumentProxy.returnKeyType` and `hasText` — action keys (send/search/go) show blue accent when text present, gray when empty. Called from `textDidChange`, `syncUI`, `reloadKeyboard`.
+- **ForEach duplicate ID fix**: `DiagnosticsView.swift` + `RimeSettingsView.swift` — changed `ForEach(lines, id: \.self)` to `ForEach(Array(lines.enumerated()), id: \.offset)` to handle repeated log lines.
+- **Performance optimization**: `KeyClickPlayer` audio moved to background serial queue — main-thread blocking reduced from 18–76ms to <1ms per keystroke.
+- **Double-tap bug fix**: Removed `UIView.animate` from `keyTouchDown`/`restoreKeyAppearance` — rapid same-key taps now register reliably.
+- **Deduplicated data source**: `candidateItems()` called once per keystroke (was twice in expanded mode).
+- **Touch feedback**: Instantaneous `transform` + `backgroundColor` (no Core Animation transactions per keystroke).
+
+**Key Lessons:**
+- iOS keyboard flickering is unfixable at the API level. Apple DTS engineers confirmed: the keyboard extension runs in a separate process, the system assigns wrong heights (844→445→216) before correcting. No constraint, `intrinsicContentSize`, `allowsSelfSizing`, or `preferredContentSize` prevents it. Only mitigation: alpha fade-in.
+- Final keyboard height varies. On iPhone 17 with iOS 26 non-adapted apps, the final height is **216pt** (not the standard 250–268pt). → *Promoted to Key Design Decisions in CLAUDE.md.*
+- Do NOT override `loadView` in `UIInputViewController`. It breaks the RIME bridge (processKey returns 0 candidates with 0.0ms bridge time). → *See `docs/architecture/swift6-migration.md` Regression Invariants.*
+- Bottom anchoring causes candidate bar clipping at 216pt. `rootStack.height(236) + bottomMargin(8) = 244pt` minimum, but view is only 216pt → top 28pt clipped.
+- Associated-object Bool bridging is unreliable. `objc_getAssociatedObject(...) as? Bool` can fail on `__NSCFBoolean`. Simpler: just rebuild.
+- Log aggressively. Without `viewDidLayoutSubviews` frame logging, we wouldn't know the final height is 216pt or that `viewDidAppear` fires at intermediate height 445pt.
+
+---
+
+## 2026-05-21 (earlier) — Swift 6 企业级重构 + RIME 统一桥接
+
+- Enterprise-grade refactoring: RIME C/ObjC ownership consolidated in `Packages/RimeBridge`; Swift 6 baseline verified 347 KeyboardCore tests with 0 failures.
+- Duplicate WAV generation unified → `ClickSoundGenerator` in KeyboardCore.
+- Duplicate Lua stripping removed from SchemaManager → uses `RimeConfigPostProcessor`.
+- Schema repair and Lua stripping are performed in the main App preparation/deployment flow; `RimeEngineImpl.init` only starts an input session over prepared data.
+- BulletRow + CapsuleBadge patterns unified into shared components (11 call sites updated).
+- `RIME_HAS_LUA=1` defined in Keyboard target preprocessor macros.
+- `activateRimeIce()` + `deployRimeConfig()` order swapped: schema activated BEFORE deploy, so deploy compiles the correct schema and flags are not overridden.
+- `t9.schema.yaml` always installed (was conditionally skipped, causing "missing input schema: t9" in deployment_tasks.cc).
+- App-side `RimeConfigManager.prepareDirectories()` schema repair is guarded by `!rimeDeployed` so it respects prior deployment results.
+- `RimeSettingsView.deployState` now refreshes via `.onChange(of: rimeIceDownloadState)` instead of only on `onAppear`.
+- `RimeDeployer.finalize` renamed to `cleanup` to avoid NSObject deprecated-method collision.
+## 2026-06-15 — 输入体验区域重构：简繁转换与候选数量移至设置页顶层
+
+- 将简繁转换和候选数量设置从「RIME 方案设置」内部提升到「设置 > 输入体验」区域，让用户更方便调节日常输入体验。
+- 简繁切换和候选数量（松手时）都会自动触发 RIME 部署，无需手动点「应用并重新部署」。
+- 候选数量 slider 使用 `onEditingChanged` 防抖，快速拖动不会触发多次部署。
+- 修复 RIME 桥接层 `syncSchemaCustomYaml` 中简繁设置只写给当前激活方案的 bug，现在两个拼音方案都写入 `switches/@1/reset`。
+- 移除了已无内容的 `RimePreferencesSections.swift`。
+- 更新了 RIME 部署页的步骤文案和 footer 说明，删除"修改上方设置"等失效引用。
+
+---

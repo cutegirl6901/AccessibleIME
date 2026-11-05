@@ -1,0 +1,92 @@
+name: 原型 IPA 构建
+
+# 用途：为 SideStore 安装产出未签名 IPA。
+# 与上游的 swift6-quality.yml 分离，不修改、不依赖原有发布流程。
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 构建配置
+        required: true
+        default: Release
+        type: choice
+        options:
+          - Release
+          - Debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prototype-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: 构建未签名 IPA
+    runs-on: macos-26
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 显示构建环境
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - name: 获取 RIME 二进制依赖
+        run: bash scripts/ensure_rime_vendor.sh fetch
+
+      - name: 校验依赖完整性
+        run: bash scripts/ensure_rime_vendor.sh verify
+
+      - name: 编译主应用与键盘扩展
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project "Universe Keyboard.xcodeproj" \
+            -scheme "Universe Keyboard" \
+            -configuration "${{ inputs.configuration }}" \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: 定位应用产物
+        id: locate
+        run: |
+          APP_PATH="build/Build/Products/${{ inputs.configuration }}-iphoneos/Universe Keyboard.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "未找到应用产物：$APP_PATH"
+            find build/Build/Products -maxdepth 2 -name "*.app" -print
+            exit 1
+          fi
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+          echo "已找到：$APP_PATH"
+          echo "包含的扩展："
+          ls -1 "$APP_PATH/PlugIns" 2>/dev/null || echo "（无 PlugIns 目录）"
+
+      - name: 打包未签名 IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="${{ steps.locate.outputs.app_path }}"
+          rm -rf Payload AccessibleIME.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry AccessibleIME.ipa Payload
+          echo "IPA 大小："
+          ls -lh AccessibleIME.ipa
+          echo "包内结构："
+          unzip -l AccessibleIME.ipa | head -30
+
+      - name: 上传 IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AccessibleIME-IPA-${{ inputs.configuration }}
+          path: AccessibleIME.ipa
+          retention-days: 30

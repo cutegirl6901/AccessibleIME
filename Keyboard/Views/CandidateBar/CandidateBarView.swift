@@ -1,0 +1,800 @@
+import KeyboardCore
+import UIKit
+
+/// The visible action zone is also its entire touch area; candidates own their viewport.
+private final class CandidateBarExpandButton: UIButton {}
+
+#if DEBUG
+    @MainActor
+    protocol CandidateTouchDiagnosticSink: AnyObject {
+        func recordCandidateTouchRouted(
+            band: DiagnosticEvent.CandidateTouchBand,
+            didHitCell: Bool
+        )
+        func recordCandidateGestureTerminal(didBegin: Bool, wasCancelled: Bool)
+    }
+#endif
+
+/// The horizontal candidate bar container.
+///
+/// The fixed height and expand-button width are part of the keyboard presentation
+/// baseline: changing them can reintroduce keyboard resize/flicker regressions.
+/// Isolated from `CandidateBarView`'s `@MainActor` so optional delegate
+/// methods actually bind. Putting them on the bar only "nearly matches".
+private final class CandidateBarGestureBridge: NSObject, UIGestureRecognizerDelegate {
+    weak var itemTap: UIGestureRecognizer?
+    weak var swipeDown: UIGestureRecognizer?
+    weak var horizontalFallback: UIGestureRecognizer?
+    weak var collectionPan: UIGestureRecognizer?
+    #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+        weak var wakeProbeButton: UIButton?
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let button = wakeProbeButton, let touched = touch.view else { return true }
+            return !touched.isDescendant(of: button)
+        }
+    #endif
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        if gestureRecognizer === itemTap || otherGestureRecognizer === itemTap {
+            return true
+        }
+        if gestureRecognizer === horizontalFallback || otherGestureRecognizer === horizontalFallback {
+            return false
+        }
+        guard gestureRecognizer === swipeDown || otherGestureRecognizer === swipeDown else {
+            return false
+        }
+        return gestureRecognizer === collectionPan || otherGestureRecognizer === collectionPan
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        if gestureRecognizer === itemTap,
+            otherGestureRecognizer === swipeDown || otherGestureRecognizer === horizontalFallback
+        {
+            return false
+        }
+        return false
+    }
+}
+
+@MainActor
+final class CandidateBarView: UIView {
+    private let actionMaterialView = UIVisualEffectView(effect: nil)
+    private let actionTintView = UIView()
+    private let actionEdgeFill = CAGradientLayer()
+    private var canExpandCandidates = false
+
+    private let recoveryLabel = UILabel()
+    private var isShowingRecoveryNotice = false
+
+    let collectionView: CandidateCollectionView
+    let expandButton: UIButton
+    let expandButtonWidthConstraint: NSLayoutConstraint
+    private var candidateTrailingConstraint: NSLayoutConstraint!
+    #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+        private var wakeProbeButton: UIButton?
+        private var wakeProbeTrailingConstraint: NSLayoutConstraint?
+        var onWakeOwnerProbeTouch: ((ObjectIdentifier, Bool) -> Void)?
+    #endif
+    /// Swipe-down expands only in expand mode (`PD-CANDIDATE-BAR-IDLE-DISMISS-001`).
+    var allowsSwipeToExpand = false
+    private weak var expandActionTarget: NSObject?
+    private let expandAction: Selector
+    private let itemTapRecognizer = UITapGestureRecognizer()
+    private let gestureBridge = CandidateBarGestureBridge()
+    private var candidateBarHeight: CGFloat { KeyboardDesignTokens.CandidateBar.totalHeight }
+    private var swipeDownRecognizer: UIPanGestureRecognizer?
+    private var horizontalFallbackRecognizer: UIPanGestureRecognizer?
+    private var hasTriggeredSwipeDownExpand = false
+    private var isSwipeDownTracking = false
+    private var swipePreviewIndexPath: IndexPath?
+    private var horizontalFallbackStartOffsetX: CGFloat = 0
+    private var lastPointInsideDiagnosticLogTime: CFTimeInterval = 0
+    private var lastHitTestDiagnosticLogTime: CFTimeInterval = 0
+    private var lastFallbackPanDiagnosticLogTime: CFTimeInterval = 0
+    #if DEBUG
+        /// Passive observation only. The callback runs after UIKit has resolved the
+        /// same hit view that would have been returned without diagnostics.
+        private weak var diagnosticSink: CandidateTouchDiagnosticSink?
+        private weak var lastStructuredTouch: UITouch?
+        private var expandHitboxOverlay: DebugKeyTouchRangeOverlayView?
+        private var hitProbeLabel: UILabel?
+    #endif
+
+    init(
+        backgroundColor: UIColor,
+        interactionTarget: Any?,
+        expandAction: Selector
+    ) {
+        self.expandActionTarget = interactionTarget as? NSObject
+        self.expandAction = expandAction
+
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = .horizontal
+        // 候选之间不能留下真实 layout 空隙，否则手势会从 scroll view 的非 cell 区域启动。
+        // 视觉间距由 cell 自身宽度承担，保证横滑和下滑都能命中候选列表。
+        layout.minimumLineSpacing = 0
+        layout.minimumInteritemSpacing = 0
+        layout.sectionInset = UIEdgeInsets(
+            top: 0, left: KeyboardDesignTokens.CandidateBar.horizontalPadding, bottom: 0,
+            right: KeyboardDesignTokens.CandidateBar.trailingContentPadding)
+
+        collectionView = CandidateCollectionView(frame: .zero, collectionViewLayout: layout)
+        expandButton = Self.makeExpandButton(target: interactionTarget, action: expandAction)
+        expandButtonWidthConstraint = expandButton.widthAnchor.constraint(
+            equalToConstant: KeyboardDesignTokens.CandidateBar.actionZoneWidth)
+
+        super.init(frame: .zero)
+
+        #if DEBUG
+            diagnosticSink = interactionTarget as? CandidateTouchDiagnosticSink
+            collectionView.onCandidateGestureTerminal = { [weak self] didBegin, wasCancelled in
+                self?.diagnosticSink?.recordCandidateGestureTerminal(
+                    didBegin: didBegin,
+                    wasCancelled: wasCancelled
+                )
+            }
+        #endif
+
+        accessibilityIdentifier = "compactCandidateBar"
+        collectionView.accessibilityIdentifier = "compactCandidateViewport"
+        self.backgroundColor = backgroundColor
+        isOpaque = false
+        layer.cornerRadius = 0
+        clipsToBounds = false
+
+        configureCollectionView()
+        addSubview(collectionView)
+        addSubview(expandButton)
+        installActionBackground()
+        bringSubviewToFront(expandButton)
+        recoveryLabel.translatesAutoresizingMaskIntoConstraints = false
+        recoveryLabel.font = .preferredFont(forTextStyle: .caption1)
+        recoveryLabel.textColor = .secondaryLabel
+        recoveryLabel.numberOfLines = 2
+        recoveryLabel.isHidden = true
+        recoveryLabel.isAccessibilityElement = true
+        recoveryLabel.accessibilityIdentifier = "t9.input-recovery.notice"
+        addSubview(recoveryLabel)
+        NSLayoutConstraint.activate([
+            recoveryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            recoveryLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            recoveryLabel.topAnchor.constraint(equalTo: topAnchor),
+            recoveryLabel.heightAnchor.constraint(equalToConstant: candidateBarHeight),
+        ])
+        gestureBridge.collectionPan = collectionView.panGestureRecognizer
+        installItemTapGesture()
+        installHorizontalFallbackGesture()
+        installSwipeDownExpandGesture()
+
+        candidateTrailingConstraint = collectionView.trailingAnchor.constraint(equalTo: expandButton.leadingAnchor)
+        NSLayoutConstraint.activate([
+            expandButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            expandButton.topAnchor.constraint(equalTo: topAnchor),
+            expandButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            expandButtonWidthConstraint,
+
+            collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            candidateTrailingConstraint,
+            collectionView.topAnchor.constraint(equalTo: topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(equalToConstant: candidateBarHeight),
+        ])
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(refreshActionAppearance),
+            name: UIAccessibility.reduceTransparencyStatusDidChangeNotification, object: nil)
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (bar: CandidateBarView, _: UITraitCollection) in
+            bar.refreshActionAppearance()
+        }
+        refreshActionAppearance()
+    }
+
+    private func installActionBackground() {
+        for background in [actionMaterialView, actionTintView] {
+            background.translatesAutoresizingMaskIntoConstraints = false
+            background.isUserInteractionEnabled = false
+            addSubview(background)
+        }
+        actionMaterialView.accessibilityIdentifier = "candidateActionMaterial"
+        actionTintView.accessibilityIdentifier = "candidateActionTint"
+        actionEdgeFill.startPoint = CGPoint(x: 0, y: 0.5)
+        actionEdgeFill.endPoint = CGPoint(x: 1, y: 0.5)
+        actionTintView.layer.addSublayer(actionEdgeFill)
+        NSLayoutConstraint.activate([
+            actionMaterialView.leadingAnchor.constraint(equalTo: expandButton.leadingAnchor),
+            actionMaterialView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            actionMaterialView.topAnchor.constraint(equalTo: topAnchor),
+            actionMaterialView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            actionTintView.leadingAnchor.constraint(equalTo: actionMaterialView.leadingAnchor),
+            actionTintView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            actionTintView.topAnchor.constraint(equalTo: topAnchor),
+            actionTintView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    func setCanExpandCandidates(_ canExpand: Bool) {
+        canExpandCandidates = canExpand
+        refreshActionAppearance()
+    }
+
+    @objc private func refreshActionAppearance() {
+        updateActionAppearance(reduceTransparency: UIAccessibility.isReduceTransparencyEnabled)
+    }
+
+    /// The environment supplies accessibility preference; the view owns only material presentation.
+    func updateActionAppearance(reduceTransparency: Bool) {
+        let appearance = KeyboardDesignTokens.CandidateActionAppearance.self
+        // Use the existing semantic tint as a single blend instead of masking a live backdrop.
+        // The disjoint viewport already clips text; blur is retained only in the expanded control.
+        actionMaterialView.effect = nil
+        actionMaterialView.isHidden = true
+        actionTintView.isHidden = !canExpandCandidates || isShowingRecoveryNotice
+        let color = appearance.backgroundColor.resolvedColor(with: traitCollection)
+        actionTintView.backgroundColor = reduceTransparency ? color : .clear
+        actionEdgeFill.isHidden = reduceTransparency
+        actionEdgeFill.colors = [
+            color.withAlphaComponent(0).cgColor, color.withAlphaComponent(appearance.tintOpacity).cgColor,
+            color.withAlphaComponent(appearance.tintOpacity).cgColor,
+        ]
+        updateActionEdgeGeometry()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// True while a downward expand pan is recognized. Callers should skip
+    /// `didSelect` so a swipe-to-expand does not also commit the cell.
+    var shouldSuppressCandidateSelection: Bool {
+        isSwipeDownTracking || hasTriggeredSwipeDownExpand
+    }
+
+    /// Direct tap delivery. UICollectionView's own selection tap waits for the
+    /// bar's expand pan to fail and never fires for a stationary press.
+    var onItemTap: ((IndexPath) -> Void)?
+
+    /// Occupies the existing row; recovery never changes keyboard geometry.
+    func setInputRecoveryNotice(_ message: String?) {
+        isShowingRecoveryNotice = message != nil
+        recoveryLabel.text = message
+        recoveryLabel.accessibilityLabel = message
+        recoveryLabel.isHidden = !isShowingRecoveryNotice
+        collectionView.isHidden = isShowingRecoveryNotice
+        collectionView.isUserInteractionEnabled = !isShowingRecoveryNotice
+        expandButton.isHidden = isShowingRecoveryNotice
+        expandButton.isEnabled = !isShowingRecoveryNotice
+        itemTapRecognizer.isEnabled = !isShowingRecoveryNotice
+        swipeDownRecognizer?.isEnabled = !isShowingRecoveryNotice
+        horizontalFallbackRecognizer?.isEnabled = !isShowingRecoveryNotice
+        refreshActionAppearance()
+        if isShowingRecoveryNotice { bringSubviewToFront(recoveryLabel) }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateActionEdgeGeometry()
+        #if DEBUG
+            refreshDebugHitboxOverlay()
+        #endif
+    }
+
+    private func updateActionEdgeGeometry() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        actionEdgeFill.frame = actionTintView.bounds
+        let fraction = min(
+            1, KeyboardDesignTokens.CandidateActionAppearance.edgeFadeWidth / max(1, actionTintView.bounds.width))
+        actionEdgeFill.locations = [0, NSNumber(value: Double(fraction)), 1]
+        CATransaction.commit()
+    }
+
+    #if DEBUG
+        func refreshDebugHitboxOverlay() {
+            for case let cell as CandidateCollectionCell in collectionView.visibleCells {
+                cell.refreshDebugHitboxOverlay()
+            }
+            guard DebugHitboxOverlayPresentation.isShowing else {
+                expandHitboxOverlay?.isHidden = true
+                hitProbeLabel?.isHidden = true
+                return
+            }
+            if !expandButton.isHidden {
+                let overlay = expandHitboxOverlay ?? DebugKeyTouchRangeOverlayView()
+                if expandHitboxOverlay == nil {
+                    addSubview(overlay)
+                    expandHitboxOverlay = overlay
+                }
+                overlay.isHidden = false
+                overlay.apply(
+                    touchFrame: expandedButtonHitFrame,
+                    visualFrame: expandButton.frame,
+                    in: self
+                )
+                bringSubviewToFront(overlay)
+            } else {
+                expandHitboxOverlay?.isHidden = true
+            }
+            DebugHitboxOverlayPresentation.refreshProbeLabel = { [weak self] in
+                self?.refreshHitProbeLabel(text: DebugHitboxOverlayPresentation.probeLine)
+            }
+            refreshHitProbeLabel(text: DebugHitboxOverlayPresentation.probeLine)
+        }
+
+        private func recordHitProbe(point: CGPoint, hitView: UIView?) {
+            guard DebugHitboxOverlayPresentation.isShowing else { return }
+            let collectionPoint = collectionView.convert(point, from: self)
+            let index = collectionView.indexPathForItem(at: collectionPoint)
+            let cell = index.flatMap { collectionView.cellForItem(at: $0) as? CandidateCollectionCell }
+            let contentHeight = cell.map { Int($0.contentView.bounds.height) } ?? -1
+            let cellHeight = cell.map { Int($0.bounds.height) } ?? -1
+            let hitName = CandidateTouchDiagnostics.viewPath(hitView)
+            let indexText = index.map { String($0.item) } ?? "nil"
+            let inCell: String
+            if let cell, let hitView {
+                inCell = (hitView === cell || hitView.isDescendant(of: cell)) ? "inCell" : "chrome"
+            } else {
+                inCell = "noCell"
+            }
+            refreshHitProbeLabel(
+                text:
+                    "\(hitName) idx=\(indexText) \(inCell) cellH=\(cellHeight) contentH=\(contentHeight) y=\(Int(point.y))"
+            )
+        }
+
+        private func refreshHitProbeLabel(text: String?) {
+            guard DebugHitboxOverlayPresentation.isShowing else {
+                hitProbeLabel?.isHidden = true
+                return
+            }
+            let label = hitProbeLabel ?? UILabel()
+            if hitProbeLabel == nil {
+                label.font = .monospacedDigitSystemFont(ofSize: 8, weight: .medium)
+                label.textColor = .systemYellow
+                label.backgroundColor = UIColor.black.withAlphaComponent(0.72)
+                label.numberOfLines = 2
+                label.adjustsFontSizeToFitWidth = true
+                label.minimumScaleFactor = 0.5
+                label.isUserInteractionEnabled = false
+                addSubview(label)
+                hitProbeLabel = label
+            }
+            label.isHidden = false
+            label.text = text ?? DebugHitboxOverlayPresentation.probeLine
+            let width = min(bounds.width - 8, max(160, bounds.width - 8))
+            label.frame = CGRect(x: 4, y: max(2, bounds.height - 30), width: width, height: 28)
+            bringSubviewToFront(label)
+        }
+    #endif
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let result = isUserInteractionEnabled && !isHidden && alpha > 0.01 && bounds.contains(point)
+        logTouch(
+            "bar pointInside",
+            point: point,
+            lastLogTime: &lastPointInsideDiagnosticLogTime,
+            extra: "inside=\(result)"
+        )
+        return result
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard isUserInteractionEnabled, !isHidden, alpha > 0.01, bounds.contains(point) else { return nil }
+        if isShowingRecoveryNotice { return self }
+        #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+            if let button = wakeProbeButton, !button.isHidden, button.frame.contains(point) {
+                return button.hitTest(button.convert(point, from: self), with: event)
+            }
+        #endif
+        let superHit = super.hitTest(point, with: event)
+        let result: UIView?
+        let collectionPoint = collectionView.convert(point, from: self)
+        if !expandButton.isHidden, expandedButtonHitFrame.contains(point) {
+            let buttonPoint = expandButton.convert(point, from: self)
+            result = expandButton.hitTest(buttonPoint, with: event) ?? expandButton
+        } else if bounds.contains(point), collectionView.frame.contains(point) {
+            result = collectionView.hitTest(collectionPoint, with: event) ?? collectionView
+        } else if bounds.contains(point) {
+            result = self
+        } else {
+            result = nil
+        }
+        logTouch(
+            "bar hitTest",
+            point: point,
+            lastLogTime: &lastHitTestDiagnosticLogTime,
+            extra: "super=\(CandidateTouchDiagnostics.viewName(superHit)) "
+                + "hit=\(CandidateTouchDiagnostics.viewName(result)) "
+                + "collectionFrame=\(rectDescription(collectionView.frame)) "
+                + "pan=\(CandidateTouchDiagnostics.gestureStateName(collectionView.panGestureRecognizer.state))"
+        )
+        #if DEBUG
+            recordStructuredTouchIfNeeded(point: point, hitView: result, event: event)
+            recordHitProbe(point: point, hitView: result)
+        #endif
+        return result
+    }
+
+    #if DEBUG
+        private func recordStructuredTouchIfNeeded(point: CGPoint, hitView: UIView?, event: UIEvent?) {
+            // Physical keyboard extensions may enter hit-testing before UIKit
+            // exposes `.began`. Identity still deduplicates repeated hit-test
+            // passes for the same single-finger operation.
+            guard let touches = event?.allTouches,
+                touches.count == 1,
+                let touch = touches.first,
+                touch.type == .direct
+            else { return }
+            guard touch !== lastStructuredTouch else { return }
+            lastStructuredTouch = touch
+
+            let band = DiagnosticEvent.CandidateTouchBand.classify(
+                y: Double(point.y),
+                height: Double(candidateBarHeight)
+            )
+            diagnosticSink?.recordCandidateTouchRouted(
+                band: band,
+                didHitCell: Self.hasCandidateCellAncestor(hitView)
+            )
+        }
+
+        private static func hasCandidateCellAncestor(_ view: UIView?) -> Bool {
+            var current = view
+            while let candidate = current {
+                if candidate is CandidateCollectionCell { return true }
+                current = candidate.superview
+            }
+            return false
+        }
+    #endif
+
+    private var expandedButtonHitFrame: CGRect {
+        expandButton.frame.intersection(bounds)
+    }
+
+    private func logTouch(
+        _ name: String,
+        point: CGPoint,
+        lastLogTime: inout CFTimeInterval,
+        extra: String
+    ) {
+        guard CandidateTouchDiagnostics.isEnabled else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastLogTime >= CandidateTouchDiagnostics.minimumLogInterval else { return }
+        lastLogTime = now
+        Logger.shared.debug(
+            "candidateTouch \(name) point=\(CandidateTouchDiagnostics.pointDescription(point)) "
+                + "bounds=\(Int(bounds.width))x\(Int(bounds.height)) \(extra)",
+            category: .display
+        )
+    }
+
+    private func rectDescription(_ rect: CGRect) -> String {
+        "(\(Int(rect.minX)),\(Int(rect.minY)),\(Int(rect.width)),\(Int(rect.height)))"
+    }
+
+    #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+        func installWakeOwnerProbeButton(target: Any?, action: Selector) {
+            guard wakeProbeButton == nil else { return }
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.backgroundColor = UIColor.systemGray.withAlphaComponent(0.001)
+            button.setTitleColor(.label, for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+            button.addTarget(target, action: action, for: .touchUpInside)
+            button.isHidden = true
+            addSubview(button)
+            wakeProbeButton = button
+            gestureBridge.wakeProbeButton = button
+            NSLayoutConstraint.activate([
+                button.trailingAnchor.constraint(equalTo: expandButton.leadingAnchor, constant: -2),
+                button.topAnchor.constraint(equalTo: topAnchor),
+                button.widthAnchor.constraint(equalToConstant: 44),
+                button.heightAnchor.constraint(equalToConstant: min(candidateBarHeight, 44)),
+            ])
+            wakeProbeTrailingConstraint = collectionView.trailingAnchor.constraint(
+                equalTo: button.leadingAnchor, constant: -2)
+            let observer = WakeOwnerProbeTouchObserver()
+            observer.cancelsTouchesInView = false
+            observer.delaysTouchesBegan = false
+            observer.delaysTouchesEnded = false
+            observer.delegate = gestureBridge
+            observer.onTouch = { [weak self] identifier, began in
+                self?.onWakeOwnerProbeTouch?(identifier, began)
+            }
+            addGestureRecognizer(observer)
+        }
+
+        func setWakeOwnerProbeButton(visible: Bool, title: String) {
+            guard let button = wakeProbeButton else { return }
+            button.setTitle(title, for: .normal)
+            button.accessibilityLabel = title == "观测" ? "开始 owner 观测" : "冻结并导出 owner 观测"
+            guard button.isHidden == visible else { return }
+            if visible {
+                candidateTrailingConstraint.isActive = false
+                wakeProbeTrailingConstraint?.isActive = true
+            } else {
+                wakeProbeTrailingConstraint?.isActive = false
+                candidateTrailingConstraint.isActive = true
+            }
+            button.isHidden = !visible
+        }
+    #endif
+
+    private func configureCollectionView() {
+        CandidateScrollViewStyle.apply(to: collectionView)
+        collectionView.showsHorizontalScrollIndicator = false
+        collectionView.showsVerticalScrollIndicator = false
+        collectionView.bounces = true
+        collectionView.alwaysBounceHorizontal = false
+        collectionView.decelerationRate = .normal
+        collectionView.delaysContentTouches = false
+        collectionView.canCancelContentTouches = true
+        collectionView.clipsToBounds = true
+        collectionView.panGestureRecognizer.addTarget(self, action: #selector(handleCandidatePan(_:)))
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.register(
+            CandidateCollectionCell.self,
+            forCellWithReuseIdentifier: CandidateCollectionCell.barReuseIdentifier
+        )
+    }
+
+    @objc private func handleCandidatePan(_ recognizer: UIPanGestureRecognizer) {
+        guard recognizer.state == .began, collectionView.isDecelerating else { return }
+        collectionView.setContentOffset(collectionView.contentOffset, animated: false)
+    }
+
+    private func installItemTapGesture() {
+        itemTapRecognizer.addTarget(self, action: #selector(handleItemTap(_:)))
+        itemTapRecognizer.cancelsTouchesInView = false
+        itemTapRecognizer.delegate = gestureBridge
+        gestureBridge.itemTap = itemTapRecognizer
+        collectionView.addGestureRecognizer(itemTapRecognizer)
+    }
+
+    @objc private func handleItemTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended, !shouldSuppressCandidateSelection else { return }
+        let point = recognizer.location(in: collectionView)
+        guard let indexPath = collectionView.indexPathForItem(at: point) else { return }
+        onItemTap?(indexPath)
+    }
+
+    private func installHorizontalFallbackGesture() {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleHorizontalFallbackPan(_:)))
+        recognizer.cancelsTouchesInView = true
+        recognizer.delegate = gestureBridge
+        horizontalFallbackRecognizer = recognizer
+        gestureBridge.horizontalFallback = recognizer
+        addGestureRecognizer(recognizer)
+    }
+
+    @objc private func handleHorizontalFallbackPan(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            if collectionView.isDecelerating {
+                collectionView.setContentOffset(collectionView.contentOffset, animated: false)
+            }
+            horizontalFallbackStartOffsetX = collectionView.contentOffset.x
+            logHorizontalFallbackPan(recognizer, phase: "began")
+        case .changed:
+            let translation = recognizer.translation(in: self)
+            let proposedX = horizontalFallbackStartOffsetX - translation.x
+            collectionView.contentOffset.x = clampedHorizontalOffset(proposedX)
+            logHorizontalFallbackPan(recognizer, phase: "changed")
+        case .ended, .cancelled, .failed:
+            logHorizontalFallbackPan(recognizer, phase: "ended")
+            horizontalFallbackStartOffsetX = collectionView.contentOffset.x
+        default:
+            break
+        }
+    }
+
+    private func clampedHorizontalOffset(_ proposedX: CGFloat) -> CGFloat {
+        let maxOffset = max(0, collectionView.contentSize.width - collectionView.bounds.width)
+        return min(max(0, proposedX), maxOffset)
+    }
+
+    private func logHorizontalFallbackPan(_ recognizer: UIPanGestureRecognizer, phase: String) {
+        guard CandidateTouchDiagnostics.isEnabled else { return }
+        let now = CACurrentMediaTime()
+        guard
+            phase != "changed" || now - lastFallbackPanDiagnosticLogTime >= CandidateTouchDiagnostics.minimumLogInterval
+        else { return }
+        lastFallbackPanDiagnosticLogTime = now
+        let point = recognizer.location(in: self)
+        let translation = recognizer.translation(in: self)
+        let velocity = recognizer.velocity(in: self)
+        Logger.shared.debug(
+            "candidateTouch bar horizontalFallback \(phase) "
+                + "point=\(CandidateTouchDiagnostics.pointDescription(point)) "
+                + "translation=\(CandidateTouchDiagnostics.pointDescription(translation)) "
+                + "velocity=\(CandidateTouchDiagnostics.pointDescription(velocity)) "
+                + "offset=\(Int(collectionView.contentOffset.x))",
+            category: .display
+        )
+    }
+
+    private func installSwipeDownExpandGesture() {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleSwipeDownExpand(_:)))
+        // Do not cancel cell taps. A downward micro-movement used to begin this
+        // pan, kill `didSelect`, and then fail the expand threshold.
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = gestureBridge
+        swipeDownRecognizer = recognizer
+        gestureBridge.swipeDown = recognizer
+        addGestureRecognizer(recognizer)
+    }
+
+    @objc private func handleSwipeDownExpand(_ recognizer: UIPanGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            if collectionView.isDecelerating {
+                collectionView.setContentOffset(collectionView.contentOffset, animated: false)
+            }
+            isSwipeDownTracking = true
+            hasTriggeredSwipeDownExpand = false
+            updateSwipePreviewHighlight(for: recognizer)
+        case .changed:
+            updateSwipePreviewHighlight(for: recognizer)
+            triggerExpandIfSwipeDownThresholdPassed(recognizer)
+        default:
+            clearSwipePreviewHighlight()
+            isSwipeDownTracking = false
+            hasTriggeredSwipeDownExpand = false
+        }
+    }
+
+    private func triggerExpandIfSwipeDownThresholdPassed(_ recognizer: UIPanGestureRecognizer) {
+        guard !hasTriggeredSwipeDownExpand, allowsSwipeToExpand else { return }
+        let translation = recognizer.translation(in: self)
+        let velocity = recognizer.velocity(in: self)
+        let isIntentionalDownSwipe =
+            translation.y > 18
+            && velocity.y > 180
+            && abs(translation.y) > abs(translation.x) * 1.2
+        guard isIntentionalDownSwipe else { return }
+        hasTriggeredSwipeDownExpand = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            self?.clearSwipePreviewHighlight()
+        }
+        expandActionTarget?.perform(expandAction)
+    }
+
+    private func updateSwipePreviewHighlight(for recognizer: UIPanGestureRecognizer) {
+        let point = recognizer.location(in: collectionView)
+        setSwipePreviewIndexPath(collectionView.indexPathForItem(at: point))
+    }
+
+    private func setSwipePreviewIndexPath(_ indexPath: IndexPath?) {
+        guard swipePreviewIndexPath != indexPath else { return }
+        clearSwipePreviewHighlight()
+        swipePreviewIndexPath = indexPath
+        guard let indexPath,
+            let cell = collectionView.cellForItem(at: indexPath) as? CandidateCollectionCell
+        else { return }
+        cell.setSwipePreviewHighlighted(true)
+    }
+
+    private func clearSwipePreviewHighlight() {
+        guard let indexPath = swipePreviewIndexPath else { return }
+        if let cell = collectionView.cellForItem(at: indexPath) as? CandidateCollectionCell {
+            cell.setSwipePreviewHighlighted(false)
+        }
+        swipePreviewIndexPath = nil
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        let velocity = pan.velocity(in: self)
+        if pan === swipeDownRecognizer {
+            guard allowsSwipeToExpand else { return false }
+            return velocity.y > 0 && abs(velocity.y) > abs(velocity.x) * 1.15
+        }
+        if pan === horizontalFallbackRecognizer {
+            guard collectionView.contentSize.width > collectionView.bounds.width else {
+                logHorizontalFallbackDecision(pan, allowed: false, reason: "contentNotScrollable")
+                return false
+            }
+            guard abs(velocity.x) > abs(velocity.y) * 1.1 else {
+                logHorizontalFallbackDecision(pan, allowed: false, reason: "notHorizontal")
+                return false
+            }
+            let point = pan.location(in: self)
+            guard !expandedButtonHitFrame.contains(point) else {
+                logHorizontalFallbackDecision(pan, allowed: false, reason: "expandButton")
+                return false
+            }
+            let allowed = shouldStartHorizontalFallback(at: point)
+            logHorizontalFallbackDecision(pan, allowed: allowed, reason: allowed ? "barBlank" : "cellOwnsPoint")
+            return allowed
+        }
+        return true
+    }
+
+    private func shouldStartHorizontalFallback(at point: CGPoint) -> Bool {
+        guard collectionView.frame.contains(point) else {
+            return bounds.contains(point)
+        }
+        let collectionPoint = collectionView.convert(point, from: self)
+        return collectionView.indexPathForItem(at: collectionPoint) == nil
+    }
+
+    private func logHorizontalFallbackDecision(
+        _ recognizer: UIPanGestureRecognizer,
+        allowed: Bool,
+        reason: String
+    ) {
+        guard CandidateTouchDiagnostics.isEnabled else { return }
+        let point = recognizer.location(in: self)
+        let collectionPoint = collectionView.convert(point, from: self)
+        let indexPath = collectionView.indexPathForItem(at: collectionPoint)
+        Logger.shared.debug(
+            "candidateTouch bar horizontalFallback shouldBegin allowed=\(allowed) "
+                + "reason=\(reason) point=\(CandidateTouchDiagnostics.pointDescription(point)) "
+                + "collectionPoint=\(CandidateTouchDiagnostics.pointDescription(collectionPoint)) "
+                + "index=\(indexPath.map { String($0.item) } ?? "nil")",
+            category: .display
+        )
+    }
+
+    static func trailingChromeImage(expanding: Bool) -> UIImage? {
+        let name = expanding ? "chevron.down" : "chevron.down.circle"
+        return UIImage(
+            systemName: name,
+            withConfiguration: UIImage.SymbolConfiguration(
+                pointSize: KeyboardDesignTokens.CandidateBar.actionSymbolSize, weight: .medium)
+        )?
+        .withRenderingMode(.alwaysTemplate)
+    }
+
+    private static func makeExpandButton(target: Any?, action: Selector) -> UIButton {
+        let button = CandidateBarExpandButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.backgroundColor = UIColor.systemGray.withAlphaComponent(0.001)
+        button.tintColor = KeyboardDesignTokens.CandidateActionAppearance.symbolColor
+        button.setImage(trailingChromeImage(expanding: true), for: .normal)
+        button.addTarget(target, action: action, for: .touchUpInside)
+        button.accessibilityLabel = "展开更多候选词"
+        button.accessibilityHint = "双击以查看完整候选列表"
+        return button
+    }
+}
+
+#if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
+    private final class WakeOwnerProbeTouchObserver: UIGestureRecognizer {
+        var onTouch: ((ObjectIdentifier, Bool) -> Void)?
+        private var active: Set<ObjectIdentifier> = []
+        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+            for touch in touches {
+                let identifier = ObjectIdentifier(touch)
+                active.insert(identifier)
+                onTouch?(identifier, true)
+            }
+            state = .began
+        }
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) { state = .changed }
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { finish(touches) }
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { finish(touches) }
+        private func finish(_ touches: Set<UITouch>) {
+            for touch in touches {
+                let identifier = ObjectIdentifier(touch)
+                active.remove(identifier)
+                onTouch?(identifier, false)
+            }
+            if active.isEmpty { state = .ended }
+        }
+        override func reset() {
+            for identifier in active { onTouch?(identifier, false) }
+            active.removeAll()
+            super.reset()
+        }
+    }
+#endif

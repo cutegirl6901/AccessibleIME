@@ -1,0 +1,166 @@
+//
+//  KeyboardViewController+KeyFactory.swift
+//  Keyboard
+//
+//  按键按钮的创建工厂方法。
+//
+//  关键设计决策：
+//
+//  1. KeyboardKeyButton（UIButton 子类）— 扩大触控区域
+//     Apple 人机界面指南（HIG）建议触控目标不小于 44×44pt。
+//     按键视觉间距仍由 UIStackView.spacing 保持；真实触控由
+//     KeyboardInputHitAreaStackView 按相邻按键中线切分（26 键与九键同一规则；
+//     九键只按左右列切网）。KeyboardKeyButton 的 expandedTouchOutsets
+//     对齐该触摸单元，使缝里转发的触摸在抬手时仍算 touchUpInside。
+//
+import UIKit
+
+extension KeyboardViewController {
+
+    /// Creates a native-style T9 letter-group key.
+    ///
+    /// Visual primary label is the letter group (e.g. `ABC`); the RIME payload remains the
+    /// digit identity in `accessibilityIdentifier` (e.g. `2`). `insertKey` prefers that
+    /// identifier when `accessibilityValue == t9DigitAccessibilityValue`.
+    func makeT9KeyButton(digit: String, letters: String) -> UIButton {
+        let button = makeKeyButton(title: letters.isEmpty ? digit : letters, action: #selector(insertKey(_:)))
+        button.accessibilityIdentifier = digit
+        button.accessibilityValue = Self.t9DigitAccessibilityValue
+        if letters.isEmpty {
+            button.accessibilityLabel = "数字 \(digit)"
+            applyKeyStyle(.character, to: button)
+            return button
+        }
+
+        button.accessibilityLabel = "\(letters)，数字 \(digit)"
+        #if T9_AUTO_ANCHOR_DEVICE_PREFLIGHT
+            // Slot order follows the visible ABC…WXYZ construction order.
+            devicePreflightT9LetterGroupButtons.append(button)
+        #endif
+        // Native 九宫格: letter group is primary; slightly smaller than prior 18pt chrome.
+        let lettersFont = UIFont.systemFont(ofSize: characterKeyTitlePointSize, weight: .regular)
+        let text = NSAttributedString(
+            string: letters,
+            attributes: [
+                .font: lettersFont,
+                .foregroundColor: UIColor.label,
+            ]
+        )
+        button.titleLabel?.numberOfLines = 1
+        button.titleLabel?.textAlignment = .center
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.7
+        button.setAttributedTitle(text, for: .normal)
+        applyKeyStyle(.character, to: button)
+        // Re-apply after style so characterKeyTitlePointSize wins over any default.
+        button.setAttributedTitle(text, for: .normal)
+        return button
+    }
+
+    /// Marker stored on T9 letter keys so `insertKey` sends the digit identity, not the label.
+    static let t9DigitAccessibilityValue = "t9Digit"
+
+    /// 创建标准按键按钮。
+    ///
+    /// 每个按钮绑定 4 个 target-action：
+    ///   - .touchUpInside → 参数中传入的 action（insertKey/toggleShift 等）
+    ///   - .touchDown → keyTouchDown（视觉反馈）
+    ///   - .touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel → keyTouchUp（恢复外观）
+    ///
+    /// 注意：touchUpInside 同时绑定了 action 和 keyTouchUp。
+    /// 调用顺序由事件类型决定：touchDown 先于 touchUpInside，
+    /// 但在同一个 UIControl 上，多个 action 的执行顺序由添加顺序决定。
+    ///
+    /// - Parameters:
+    ///   - title: 按钮标题文本
+    ///   - action: touchUpInside 时触发的业务方法
+    /// - Returns: 配置完成的 KeyboardKeyButton
+    func makeKeyButton(title: String, action: Selector) -> UIButton {
+        // 使用 KeyboardKeyButton（自定义子类）而非标准 UIButton
+        // 以获得扩展的触控区域
+        let button = KeyboardKeyButton(type: .system)
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: characterKeyTitlePointSize, weight: .regular)
+        #if DEBUG
+            button.trackingEventHandler = { [weak self] button, phase in
+                self?.recordKeyboardTrackingDiagnostic(button: button, phase: phase)
+            }
+        #endif
+        // 默认应用字符键样式 — 调用方可以根据需要覆盖（如 applyKeyStyle(.function, to:)）
+        applyKeyStyle(.character, to: button)
+
+        // ── 绑定事件 ────────────────────────────────────────────
+        // 1. 业务动作（touchUpInside — 手指在按钮内松开）
+        button.addTarget(self, action: action, for: .touchUpInside)
+        // 2. 按下反馈（touchDown — 手指触碰按钮瞬间）
+        button.addTarget(self, action: #selector(keyTouchDown(_:)), for: .touchDown)
+        // 3. 松开恢复（多种松开事件 — 手指离开、滑出、取消等）
+        button.addTarget(
+            self,
+            action: #selector(keyTouchUp(_:)),
+            for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel]
+        )
+        configureKeyAccessibility(button, title: title, action: action)
+        return button
+    }
+
+    /// Applies a template SF Symbol used by Delete / Return / Globe-style function keys.
+    func applyFunctionKeySymbol(_ systemName: String, to button: UIButton) {
+        button.setTitle(nil, for: .normal)
+        button.setAttributedTitle(nil, for: .normal)
+        let image = UIImage(systemName: systemName)?.withRenderingMode(.alwaysTemplate)
+        button.setImage(image, for: .normal)
+        button.setPreferredSymbolConfiguration(
+            UIImage.SymbolConfiguration(pointSize: functionKeySymbolPointSize, weight: .regular),
+            forImageIn: .normal
+        )
+    }
+
+    /// 创建删除键按钮（按住会话：单击松手、水平擦除、长按重复）。
+    ///
+    /// 与普通按键的区别：
+    ///   - touchDown 只建立会话和按下反馈，不删字
+    ///   - 拖动（含 touchDragExit）更新会话，不结束按住
+    ///   - touchUpInside / touchUpOutside 才结束会话
+    ///   - 不绑定标准 keyTouchDown/keyTouchUp（避免冲突）
+    func makeDeleteButton() -> UIButton {
+        let lift = #selector(deleteKeyTouchUpInside(_:forEvent:))
+        let button = makeKeyButton(title: "", action: lift)
+        applyFunctionKeySymbol("delete.left", to: button)
+
+        button.removeTarget(self, action: lift, for: .touchUpInside)
+        button.removeTarget(self, action: #selector(keyTouchDown(_:)), for: .touchDown)
+        button.removeTarget(
+            self,
+            action: #selector(keyTouchUp(_:)),
+            for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel]
+        )
+
+        button.addTarget(self, action: #selector(deleteKeyTouchDown(_:forEvent:)), for: .touchDown)
+        button.addTarget(self, action: lift, for: .touchUpInside)
+        button.addTarget(
+            self,
+            action: #selector(deleteKeyTouchUpOutside(_:forEvent:)),
+            for: .touchUpOutside
+        )
+        button.addTarget(
+            self,
+            action: #selector(deleteKeyTouchDrag(_:forEvent:)),
+            for: [.touchDragInside, .touchDragOutside, .touchDragExit]
+        )
+        button.addTarget(self, action: #selector(deleteKeyTouchCancel(_:)), for: .touchCancel)
+
+        // 删除键使用功能键样式（灰色背景）
+        applyKeyStyle(.function, to: button)
+        // applyKeyStyle may reset title color; keep template symbol tint on the image.
+        button.tintColor = .label
+        return button
+    }
+
+    /// 根据当前 Shift 状态返回按键的显示标题（大写或小写）。
+    /// - Parameter key: 原始按键值（小写，如 "a"）
+    /// - Returns: Shift 开启时返回大写（"A"），否则返回小写（"a"）
+    func displayTitle(for key: String) -> String {
+        isShiftActive ? key.uppercased() : key.lowercased()
+    }
+}
