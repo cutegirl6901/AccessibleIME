@@ -835,7 +835,7 @@ class KeyboardViewController: UIInputViewController {
     private func startRimeSyncActivityHeartbeat() {
         guard rimeSyncActivityHeartbeatTimer == nil else { return }
 
-        let defaults = sharedDefaults
+        let defaults = sharedDefaults ?? .standard
         RimeSyncKeyboardActivity.recordVisibleKeyboard(in: defaults)
 
         let appGroupID = Self.appGroupID
