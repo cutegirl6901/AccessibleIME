@@ -94,3 +94,27 @@ jobs:
           name: AccessibleIME-IPA-${{ inputs.configuration }}
           path: AccessibleIME.ipa
           retention-days: 30
+
+      # 自动更新 SideStore 安装源，避免每次手动传输 IPA。
+      # 固定标签 prototype-latest，每次构建覆盖其中的 IPA 附件。
+      - name: 发布到 SideStore 安装源
+        if: inputs.configuration == 'Release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="prototype-latest"
+          REPO="${{ github.repository }}"
+
+          # 首次运行时创建固定标签的发布版本。
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" \
+              --title "无障碍拼音原型（最新）" \
+              --notes "SideStore 安装源。每次发布自动更新。"
+          fi
+
+          # 覆盖旧附件；失败时先删除同名附件再上传。
+          gh release upload "$TAG" AccessibleIME.ipa --repo "$REPO" --clobber
+
+          echo "安装地址："
+          echo "https://github.com/$REPO/releases/download/$TAG/AccessibleIME.ipa"
