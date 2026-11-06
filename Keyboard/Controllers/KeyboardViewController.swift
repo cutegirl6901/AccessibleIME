@@ -391,7 +391,8 @@ class KeyboardViewController: UIInputViewController {
         UserDefaults(suiteName: Self.appGroupID) ?? .standard
     }
 
-    lazy var sharedDefaults = Self.effectiveDefaults
+    /// 保持可选类型，与既有可选链调用保持一致。
+    lazy var sharedDefaults: UserDefaults? = Self.effectiveDefaults
     lazy var typoCorrectionLearningStore = TypoCorrectionLearningStore(
         defaults: sharedDefaults
     )
