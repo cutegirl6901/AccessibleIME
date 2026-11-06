@@ -296,7 +296,7 @@ extension KeyboardViewController {
     /// - App Group 路径仅在本地资源不可用且共享容器可用时作为回退。
     private func prepareRimeRuntimeAvailability() {
         if let (sharedDir, userDir) = RimeConfigManager.localRuntimeDirectories() {
-            pendingRimeRuntimeDirectories = (sharedDir, userDir)
+            pendingRimeRuntimeDirectories = (sharedDataDir: sharedDir, userDataDir: userDir)
             controller.enableDefaultRimeEngine()
             Logger.shared.info(
                 "Local RIME runtime available; deferring librime startup until keyboard is visible",
@@ -306,7 +306,7 @@ extension KeyboardViewController {
         }
 
         if let (sharedDir, userDir) = RimeConfigManager.runtimeDirectories() {
-            pendingRimeRuntimeDirectories = (sharedDir, userDir)
+            pendingRimeRuntimeDirectories = (sharedDataDir: sharedDir, userDataDir: userDir)
             controller.enableDefaultRimeEngine()
             Logger.shared.info(
                 "App Group available; deferring librime startup until keyboard is visible",
