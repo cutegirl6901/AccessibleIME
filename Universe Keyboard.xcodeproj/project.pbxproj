@@ -120,7 +120,7 @@
 			membershipExceptions = (
 				RimeBuiltin,
 			);
-			target = 793AC84E2FB0BDB000DAE835 /* Universe Keyboard */;
+			target = 793AC8492FB0BDB000DAE835 /* Universe Keyboard */;
 		};
 		793AC8642FB0BE0600DAE835 /* Exceptions for "Keyboard" folder in "Keyboard" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
