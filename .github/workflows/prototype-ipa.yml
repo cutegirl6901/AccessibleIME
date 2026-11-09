@@ -72,8 +72,6 @@ jobs:
           fi
           echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
           echo "已找到：$APP_PATH"
-          echo "包含的扩展："
-          ls -1 "$APP_PATH/PlugIns" 2>/dev/null || echo "（无 PlugIns 目录）"
 
       - name: 打包未签名 IPA
         run: |
@@ -84,9 +82,9 @@ jobs:
           cp -R "$APP_PATH" Payload/
           zip -qry AccessibleIME.ipa Payload
           echo "IPA 大小："
-          ls -lh AccessibleIME.ipa
-          echo "包内结构："
-          unzip -l AccessibleIME.ipa | head -30
+          ls -l AccessibleIME.ipa
+          echo "包内关键文件："
+          unzip -l AccessibleIME.ipa | grep -E 'RimeBuiltin|Keyboard.appex/$' | head -10
 
       - name: 上传 IPA
         uses: actions/upload-artifact@v4
@@ -94,27 +92,3 @@ jobs:
           name: AccessibleIME-IPA-${{ inputs.configuration }}
           path: AccessibleIME.ipa
           retention-days: 30
-
-      # 自动更新 SideStore 安装源，避免每次手动传输 IPA。
-      # 固定标签 prototype-latest，每次构建覆盖其中的 IPA 附件。
-      - name: 发布到 SideStore 安装源
-        if: inputs.configuration == 'Release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG="prototype-latest"
-          REPO="${{ github.repository }}"
-
-          # 首次运行时创建固定标签的发布版本。
-          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$REPO" \
-              --title "无障碍拼音原型（最新）" \
-              --notes "SideStore 安装源。每次发布自动更新。"
-          fi
-
-          # 覆盖旧附件；失败时先删除同名附件再上传。
-          gh release upload "$TAG" AccessibleIME.ipa --repo "$REPO" --clobber
-
-          echo "安装地址："
-          echo "https://github.com/$REPO/releases/download/$TAG/AccessibleIME.ipa"
