@@ -122,6 +122,13 @@
 			);
 			target = 793AC8492FB0BDB000DAE835 /* Universe Keyboard */;
 		};
+		D32130000000000000000004 /* Exclude RimeBuiltin from main app Resources phase */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = 793AC8482FB0BDB000DAE835 /* Resources */;
+			membershipExceptions = (
+				RimeBuiltin,
+			);
+		};
 		793AC8642FB0BE0600DAE835 /* Exceptions for "Keyboard" folder in "Keyboard" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -146,6 +153,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				D32130000000000000000003 /* Exclude RimeBuiltin from main app */,
+				D32130000000000000000004 /* Exclude RimeBuiltin from main app Resources phase */,
 			);
 			path = "Universe Keyboard";
 			sourceTree = "<group>";
