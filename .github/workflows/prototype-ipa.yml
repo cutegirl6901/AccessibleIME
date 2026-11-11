@@ -73,42 +73,6 @@ jobs:
           echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
           echo "已找到：$APP_PATH"
 
-      - name: 裁剪主应用内的 RIME 资源副本
-        # 主应用与键盘扩展各打包一份 RimeBuiltin，压缩后重复约 22 MB。
-        # 主应用运行期不依赖这份资源：唯一入口 RimeConfigManager.prepareDirectories
-        # 需要 App Group 容器，而本原型已清空 App Group entitlements，必然失败。
-        # 键盘扩展的资源位于 PlugIns/Keyboard.appex/，不受本步骤影响。
-        run: |
-          set -euo pipefail
-          APP_PATH="${{ steps.locate.outputs.app_path }}"
-          MANIFEST="Keyboard/RimeBuiltin/RimeBuiltin.manifest.json"
-          if [ ! -f "$MANIFEST" ]; then
-            echo "未找到 RIME 清单：$MANIFEST"
-            exit 1
-          fi
-          before=$(du -sk "$APP_PATH" | cut -f1)
-          removed=0
-          # 主应用同步组把 RimeBuiltin 内的文件打平复制到 .app 根目录。
-          # 从清单 entries 精确取出文件名（避免误匹配 manifest 内其它 path 字段），
-          # 连同清单自身一并删除。
-          python3 - "$MANIFEST" > /tmp/rime_names.txt <<'PY'
-          import json, sys
-          m = json.load(open(sys.argv[1]))
-          names = [e["path"].split("/")[-1] for e in m["entries"]]
-          names.append("RimeBuiltin.manifest.json")
-          print("\n".join(names))
-          PY
-          while IFS= read -r name; do
-            [ -z "$name" ] && continue
-            if [ -e "$APP_PATH/$name" ]; then
-              rm -f "$APP_PATH/$name"
-              removed=$((removed + 1))
-            fi
-          done < /tmp/rime_names.txt
-          after=$(du -sk "$APP_PATH" | cut -f1)
-          echo "已删除主应用 RIME 资源文件数：$removed"
-          echo "主应用体积：${before} KB -> ${after} KB"
-
       - name: 打包未签名 IPA
         run: |
           set -euo pipefail
