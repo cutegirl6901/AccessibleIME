@@ -1,0 +1,19 @@
+﻿name: 探测 rime_deployer 可用性
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: macos-26
+    steps:
+      - name: 检查 homebrew 与 librime
+        run: |
+          echo "=== brew 版本 ==="
+          brew --version || true
+          echo "=== 是否已装 librime ==="
+          brew list librime 2>/dev/null || echo "未安装"
+          echo "=== 尝试安装 ==="
+          brew install librime 2>&1 | tail -20 || true
+          echo "=== rime_deployer 位置 ==="
+          ls -l /opt/homebrew/bin/rime_deployer 2>/dev/null || which rime_deployer || echo "未找到"
+          echo "=== 版本 ==="
+          /opt/homebrew/bin/rime_deployer --version 2>&1 || true
