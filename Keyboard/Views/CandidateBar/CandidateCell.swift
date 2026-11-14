@@ -350,10 +350,26 @@ final class CandidateCollectionCell: UICollectionViewCell {
     }
 
     private func accessibilityLabel(for item: CandidateItem) -> String {
+        Self.spokenDescription(for: item)
+    }
+
+    /// 候选被 VoiceOver 朗读时的文案。
+    ///
+    /// 同时供「自动朗读首个候选」复用，保证触摸与自动播报的说法一致。
+    /// 普通候选附上 RIME 注释里的拼音，用于区分同音字（如「你，ni」）。
+    static func spokenDescription(for item: CandidateItem) -> String {
         if let correction = item.correction {
             let summary = correction.edits.map { "\($0.original) 改为 \($0.replacement)" }.joined(separator: "，")
             return "纠错候选 \(item.title)，\(summary)"
         }
-        return item.kind == .composition ? "提交拼音 \(item.title)" : item.title
+        if item.kind == .composition {
+            return "提交拼音 \(item.title)"
+        }
+        if let comment = item.comment?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !comment.isEmpty
+        {
+            return "\(item.title)，\(comment)"
+        }
+        return item.title
     }
 }

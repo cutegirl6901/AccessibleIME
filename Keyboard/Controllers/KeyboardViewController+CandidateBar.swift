@@ -192,6 +192,32 @@ extension KeyboardViewController {
                 category: .display
             )
         #endif
+
+        announceFirstCandidateIfNeeded(items)
+    }
+
+    /// 候选更新后，用 VoiceOver 自动朗读第一个候选。
+    ///
+    /// 视障用户看不到候选栏，如果没有朗读，就只能靠逐个触摸摸索。
+    /// 这里在候选集合变化时播报首选项，内容与触摸该候选时听到的一致
+    /// （候选文字 + 拼音注释，见 CandidateCell.accessibilityLabel）。
+    ///
+    /// 同一候选不重复播报；英文模式或无候选时不播报。
+    private func announceFirstCandidateIfNeeded(_ items: [CandidateItem]) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        guard controller.state.inputMode == .chinese else {
+            lastAnnouncedCandidateText = nil
+            return
+        }
+        guard let first = items.first, first.kind == .candidate else {
+            lastAnnouncedCandidateText = nil
+            return
+        }
+        guard first.title != lastAnnouncedCandidateText else { return }
+
+        lastAnnouncedCandidateText = first.title
+        let spoken = CandidateCollectionCell.spokenDescription(for: first)
+        UIAccessibility.post(notification: .announcement, argument: spoken)
     }
 
     func appendToCandidateBar(insertedCount: Int? = nil) {

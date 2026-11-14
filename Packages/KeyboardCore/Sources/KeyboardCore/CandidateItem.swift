@@ -114,17 +114,22 @@ public struct CandidateItem: Equatable, Sendable {
     public let correction: TypoCorrectionCommit?
     /// 普通 RIME 候选的页码和页内索引。其他候选类型为 nil。
     public let selectionReference: CandidateSelectionReference?
+    /// RIME 提供的候选注释，通常是拼音（如 "ni hao"）。
+    /// VoiceOver 朗读候选时用它补充读音，帮助区分同音字。
+    public let comment: String?
 
     public init(
         title: String,
         kind: CandidateKind,
         correction: TypoCorrectionCommit? = nil,
-        selectionReference: CandidateSelectionReference? = nil
+        selectionReference: CandidateSelectionReference? = nil,
+        comment: String? = nil
     ) {
         self.title = title
         self.kind = kind
         self.correction = correction
         self.selectionReference = selectionReference
+        self.comment = comment
     }
 
     /// Creates a normal RIME candidate with its stable page position.
@@ -143,7 +148,8 @@ public struct CandidateItem: Equatable, Sendable {
                 indexOnPage: indexOnPage,
                 globalIndex: globalIndex,
                 candidateOrigin: candidateOrigin
-            )
+            ),
+            comment: candidate.comment
         )
     }
 }

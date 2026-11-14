@@ -263,6 +263,8 @@ class KeyboardViewController: UIInputViewController {
     // This pure-value store is the actual paging model, not a shadow cache.
     let candidatePresentationStore = RimeCandidatePresentationStore()
     var candidateSnapshotOrigin: RimeOutputOrigin?
+    /// 上一次自动朗读过的候选文本，用于避免同一条候选被重复播报。
+    var lastAnnouncedCandidateText: String?
     var accumulatedCandidates: [CandidateItem] {
         get { candidatePresentationStore.page.items }
         set { candidatePresentationStore.page.items = newValue }
