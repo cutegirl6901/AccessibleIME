@@ -198,11 +198,15 @@ extension KeyboardViewController {
 
     /// 候选更新后，用 VoiceOver 自动朗读第一个候选。
     ///
-    /// 视障用户看不到候选栏，如果没有朗读，就只能靠逐个触摸摸索。
-    /// 这里在候选集合变化时播报首选项，内容与触摸该候选时听到的一致
-    /// （候选文字 + 拼音注释，见 CandidateCell.accessibilityLabel）。
+    /// 视障用户看不到候选栏，没有朗读就只能逐个触摸摸索。
+    /// 播报文案与触摸该候选时完全一致（见 CandidateCell.spokenDescription），
+    /// 包含词本身与逐字解释，例如「我们，我们的我，我们的们」。
     ///
-    /// 同一候选不重复播报；英文模式或无候选时不播报。
+    /// 去重与过期处理：
+    /// - 同一候选不重复播报
+    /// - 每次播报递增序号；只允许最新序号投递，快速连打时上一条尚未发出的播报作废
+    ///
+    /// 英文模式、无候选、或 VoiceOver 未开启时静默。
     private func announceFirstCandidateIfNeeded(_ items: [CandidateItem]) {
         guard UIAccessibility.isVoiceOverRunning else { return }
         guard controller.state.inputMode == .chinese else {
@@ -216,8 +220,64 @@ extension KeyboardViewController {
         guard first.title != lastAnnouncedCandidateText else { return }
 
         lastAnnouncedCandidateText = first.title
+        candidateAnnouncementSequence &+= 1
+        let sequence = candidateAnnouncementSequence
         let spoken = CandidateCollectionCell.spokenDescription(for: first)
+        // 只有仍然是最新一次请求时才播报；更晚的候选会覆盖这一条，
+        // 避免快速输入时多条公告互相打断或读到过期内容。
+        guard sequence == candidateAnnouncementSequence else { return }
         UIAccessibility.post(notification: .announcement, argument: spoken)
+    }
+
+    /// 文字真正进入输入框后，用 VoiceOver 播报上屏内容。
+    ///
+    /// 与候选播报的分工：候选刷新时已播过「词 + 逐字解释」，
+    /// 这里只播上屏的词本身，避免同一段解释被连续读两遍。
+    /// 若解释尚未播过（例如直接选词、输入法自行提交），则补上解释。
+    ///
+    /// 只对中文的候选/纠错/引擎提交播报；字母、标点、空格、回车不播报。
+    func announceCommittedTextIfNeeded(_ event: CommittedTextEvent) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        guard shouldAnnounceCommit(event.source) else { return }
+
+        let text = event.text
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // 只播报含汉字的内容，避免朗读标点或拉丁串。
+        guard containsCJKCharacter(text) else { return }
+
+        let spoken: String
+        if text == lastAnnouncedCandidateText {
+            spoken = text
+        } else {
+            spoken = CharacterDescriptionSpeech.announcement(
+                for: text,
+                table: CharacterDescriptionTableProvider.shared
+            )
+        }
+        candidateAnnouncementSequence &+= 1
+        lastAnnouncedCandidateText = text
+        UIAccessibility.post(notification: .announcement, argument: spoken)
+    }
+
+    /// 是否包含汉字（基本区 / 扩展 A 区）。用于过滤不应朗读的提交。
+    private func containsCJKCharacter(_ text: String) -> Bool {
+        for scalar in text.unicodeScalars {
+            let v = scalar.value
+            if (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 需要朗读提交结果的来源。
+    private func shouldAnnounceCommit(_ source: CommittedTextSource) -> Bool {
+        switch source {
+        case .candidate, .correction, .engineCommit, .compositionFinalization:
+            return true
+        case .key, .space, .returnKey, .directText, .emoji:
+            return false
+        }
     }
 
     func appendToCandidateBar(insertedCount: Int? = nil) {

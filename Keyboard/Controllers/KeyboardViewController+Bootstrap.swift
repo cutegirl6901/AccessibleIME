@@ -155,7 +155,10 @@ extension KeyboardViewController {
                 correction)
         }
         controller.onCommittedText = { [weak self] event in
-            guard let self, self.cachedTypingIntelligenceEnabled else { return }
+            guard let self else { return }
+            // 上屏后用 VoiceOver 播报实际进入输入框的内容与逐字解释。
+            self.announceCommittedTextIfNeeded(event)
+            guard self.cachedTypingIntelligenceEnabled else { return }
             let delta = TypingStatisticsClassifier.classify(event.text)
             self.typingStatisticsWriter.record(
                 delta,

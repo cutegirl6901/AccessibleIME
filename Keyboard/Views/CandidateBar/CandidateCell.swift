@@ -356,7 +356,9 @@ final class CandidateCollectionCell: UICollectionViewCell {
     /// 候选被 VoiceOver 朗读时的文案。
     ///
     /// 同时供「自动朗读首个候选」复用，保证触摸与自动播报的说法一致。
-    /// 普通候选附上 RIME 注释里的拼音，用于区分同音字（如「你，ni」）。
+    /// 普通候选使用 NVDA 字符描述补充逐字解释（如「我们，我们的我，我们的们」），
+    /// 帮助视障用户确认同音字；查不到时退回原词。
+    @MainActor
     static func spokenDescription(for item: CandidateItem) -> String {
         if let correction = item.correction {
             let summary = correction.edits.map { "\($0.original) 改为 \($0.replacement)" }.joined(separator: "，")
@@ -365,11 +367,9 @@ final class CandidateCollectionCell: UICollectionViewCell {
         if item.kind == .composition {
             return "提交拼音 \(item.title)"
         }
-        if let comment = item.comment?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !comment.isEmpty
-        {
-            return "\(item.title)，\(comment)"
-        }
-        return item.title
+        return CharacterDescriptionSpeech.announcement(
+            for: item.title,
+            table: CharacterDescriptionTableProvider.shared
+        )
     }
 }

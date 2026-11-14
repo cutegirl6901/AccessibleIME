@@ -265,6 +265,8 @@ class KeyboardViewController: UIInputViewController {
     var candidateSnapshotOrigin: RimeOutputOrigin?
     /// 上一次自动朗读过的候选文本，用于避免同一条候选被重复播报。
     var lastAnnouncedCandidateText: String?
+    /// 候选播报序号；递增后旧公告作废，防止快速输入时读到过期内容。
+    var candidateAnnouncementSequence: UInt64 = 0
     var accumulatedCandidates: [CandidateItem] {
         get { candidatePresentationStore.page.items }
         set { candidatePresentationStore.page.items = newValue }
