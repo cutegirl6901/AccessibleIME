@@ -71,7 +71,8 @@ extension CharacterDescriptionTable {
     /// 从 bundle 资源加载。语言代码形如 `zh_CN` / `zh_TW`。
     ///
     /// 找不到资源时返回空表，调用方应回退到原字符朗读，不影响输入。
-    public static func load(languageCode: String, bundle: Bundle = .module) -> CharacterDescriptionTable {
+    public static func load(languageCode: String, bundle: Bundle? = nil) -> CharacterDescriptionTable {
+        let bundle = bundle ?? .module
         let name = resourceName(for: languageCode)
         guard
             let url = bundle.url(forResource: name, withExtension: "txt", subdirectory: "CharDescriptions")

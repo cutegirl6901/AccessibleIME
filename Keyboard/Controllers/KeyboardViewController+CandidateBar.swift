@@ -251,7 +251,7 @@ extension KeyboardViewController {
         } else {
             spoken = CharacterDescriptionSpeech.announcement(
                 for: text,
-                table: CharacterDescriptionTableProvider.shared
+                table: CharacterDescriptionTableProvider.shared.table
             )
         }
         candidateAnnouncementSequence &+= 1

@@ -358,7 +358,6 @@ final class CandidateCollectionCell: UICollectionViewCell {
     /// 同时供「自动朗读首个候选」复用，保证触摸与自动播报的说法一致。
     /// 普通候选使用 NVDA 字符描述补充逐字解释（如「我们，我们的我，我们的们」），
     /// 帮助视障用户确认同音字；查不到时退回原词。
-    @MainActor
     static func spokenDescription(for item: CandidateItem) -> String {
         if let correction = item.correction {
             let summary = correction.edits.map { "\($0.original) 改为 \($0.replacement)" }.joined(separator: "，")
@@ -369,7 +368,7 @@ final class CandidateCollectionCell: UICollectionViewCell {
         }
         return CharacterDescriptionSpeech.announcement(
             for: item.title,
-            table: CharacterDescriptionTableProvider.shared
+            table: CharacterDescriptionTableProvider.shared.table
         )
     }
 }
