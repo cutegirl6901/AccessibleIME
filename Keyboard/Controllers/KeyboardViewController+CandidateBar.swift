@@ -219,12 +219,15 @@ extension KeyboardViewController {
             lastAnnouncedCandidateText = nil
             return
         }
+        // 同一候选内容不重复播报；候选一变就播，保证「输入字符 → 读出当前候选」。
         guard first.title != lastAnnouncedCandidateText else { return }
 
         lastAnnouncedCandidateText = first.title
         candidateAnnouncementSequence &+= 1
         let sequence = candidateAnnouncementSequence
         let spoken = CandidateCollectionCell.spokenDescription(for: first)
+        // 推迟到下一主线程循环：候选栏刚 reloadData，先让 UIKit 提交本帧。
+        // 序号不符说明期间已有更新的候选，这条直接放弃，避免读到过期内容。
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             guard self.candidateAnnouncementSequence == sequence else { return }
@@ -255,7 +258,9 @@ extension KeyboardViewController {
         guard containsCJKCharacter(text) else { return }
 
         let spoken: String
-        if text == lastAnnouncedCandidateText {
+        // 与候选播报共用去重会互相污染：上屏写入后，再把同一候选打出来
+        // 会被误判为重复而不播报。这里用独立变量，并且只在文本重复时省略解释。
+        if text == lastAnnouncedCommittedText {
             spoken = text
         } else {
             spoken = CharacterDescriptionSpeech.announcement(
@@ -264,7 +269,7 @@ extension KeyboardViewController {
             )
         }
         candidateAnnouncementSequence &+= 1
-        lastAnnouncedCandidateText = text
+        lastAnnouncedCommittedText = text
         UIAccessibility.post(notification: .announcement, argument: spoken)
     }
 

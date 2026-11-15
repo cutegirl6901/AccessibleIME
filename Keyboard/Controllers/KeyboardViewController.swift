@@ -267,6 +267,9 @@ class KeyboardViewController: UIInputViewController {
     var lastAnnouncedCandidateText: String?
     /// 候选播报序号；递增后旧公告作废，防止快速输入时读到过期内容。
     var candidateAnnouncementSequence: UInt64 = 0
+    /// 上一次播报过的上屏文本。与候选去重分开，避免上屏写入后
+    /// 把「同一候选再次出现」误判为重复而不播报。
+    var lastAnnouncedCommittedText: String?
     var accumulatedCandidates: [CandidateItem] {
         get { candidatePresentationStore.page.items }
         set { candidatePresentationStore.page.items = newValue }
