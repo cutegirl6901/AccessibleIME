@@ -196,17 +196,22 @@ extension KeyboardViewController {
         announceFirstCandidateIfNeeded(items)
     }
 
-    /// 候选更新后，用 VoiceOver 自动朗读第一个候选。
+    /// 候选更新后，让 VoiceOver 读出第一个候选。
     ///
-    /// 视障用户看不到候选栏，没有朗读就只能逐个触摸摸索。
-    /// 播报文案与触摸该候选时完全一致（见 CandidateCell.spokenDescription），
-    /// 包含词本身与逐字解释，例如「我们，我们的我，我们的们」。
+    /// 实现方式说明（重要）：
+    /// - 键盘扩展里 UIAccessibility.post(.announcement) 不生效——扩展没有前台
+    ///   身份，系统会静默丢弃这类公告（实测确认，同类第三方键盘亦然）。
+    /// - 可用的替代是「把无障碍焦点移到第一个候选格上」，VoiceOver 会按该格既有的
+    ///   accessibilityLabel 自然朗读。搜狗输入法在 iOS 上正是这个行为：输入后焦点
+    ///   落到第一个候选，因此有播报。
+    /// - 候选格的朗读文案已包含词与逐字解释（见 CandidateCell.spokenDescription），
+    ///   所以焦点转移即可得到「我们，我们的我，我们的们」。
     ///
     /// 去重与过期处理：
-    /// - 同一候选不重复播报
-    /// - 每次播报递增序号；只允许最新序号投递，快速连打时上一条尚未发出的播报作废
+    /// - 同一候选不重复转移焦点
+    /// - 每次递增序号；投递前校验序号，快速连打时旧的焦点请求作废
     ///
-    /// 英文模式、无候选、或 VoiceOver 未开启时静默。
+    /// 英文模式、无候选、或 VoiceOver 未开启时保持静默与原有焦点。
     private func announceFirstCandidateIfNeeded(_ items: [CandidateItem]) {
         guard UIAccessibility.isVoiceOverRunning else { return }
         guard controller.state.inputMode == .chinese else {
@@ -218,15 +223,36 @@ extension KeyboardViewController {
             return
         }
         guard first.title != lastAnnouncedCandidateText else { return }
+        // 只在用户刚按过字母键时接管焦点。首次加载、翻页、展开面板等场景
+        // 不应把 VoiceOver 焦点从用户当前位置拽走。
+        guard let lastKey = lastLetterKeyInputTime,
+            CACurrentMediaTime() - lastKey < 1.5
+        else { return }
 
         lastAnnouncedCandidateText = first.title
         candidateAnnouncementSequence &+= 1
-        let sequence = candidateAnnouncementSequence
-        let spoken = CandidateCollectionCell.spokenDescription(for: first)
-        // 只有仍然是最新一次请求时才播报；更晚的候选会覆盖这一条，
-        // 避免快速输入时多条公告互相打断或读到过期内容。
-        guard sequence == candidateAnnouncementSequence else { return }
-        UIAccessibility.post(notification: .announcement, argument: spoken)
+        focusFirstCandidateCell(sequence: candidateAnnouncementSequence)
+    }
+
+    /// 把 VoiceOver 焦点移到候选栏第一格。
+    ///
+    /// 必须等 reloadData() 完成布局后再取 cell，否则拿不到刚创建的格子；
+    /// 因此推迟到下一个主线程循环。序号不符说明期间已有更新的候选，直接放弃。
+    private func focusFirstCandidateCell(sequence: UInt64) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.candidateAnnouncementSequence == sequence else { return }
+            guard UIAccessibility.isVoiceOverRunning else { return }
+            guard let collectionView = self.candidateCollectionView else { return }
+            guard collectionView.numberOfItems(inSection: 0) > 0 else { return }
+            // 候选栏已展开时焦点属于展开面板，不抢占，避免把用户从面板里拽出来。
+            guard !self.isCandidateExpanded else { return }
+
+            collectionView.layoutIfNeeded()
+            let indexPath = IndexPath(item: 0, section: 0)
+            guard let cell = collectionView.cellForItem(at: indexPath) else { return }
+            UIAccessibility.post(notification: .layoutChanged, argument: cell)
+        }
     }
 
     /// 文字真正进入输入框后，用 VoiceOver 播报上屏内容。
@@ -236,6 +262,11 @@ extension KeyboardViewController {
     /// 若解释尚未播过（例如直接选词、输入法自行提交），则补上解释。
     ///
     /// 只对中文的候选/纠错/引擎提交播报；字母、标点、空格、回车不播报。
+    ///
+    /// 注意：键盘扩展里 UIAccessibility.post(.announcement) 实测不生效（见
+    /// announceFirstCandidateIfNeeded 的说明）。上屏后候选栏已清空，没有可转移
+    /// 焦点的候选格，因此这里保留 announcement 调用作为向前兼容，不依赖它。
+    /// 上屏内容通常由宿主输入框自身的文本变化被 VoiceOver 感知。
     func announceCommittedTextIfNeeded(_ event: CommittedTextEvent) {
         guard UIAccessibility.isVoiceOverRunning else { return }
         guard shouldAnnounceCommit(event.source) else { return }

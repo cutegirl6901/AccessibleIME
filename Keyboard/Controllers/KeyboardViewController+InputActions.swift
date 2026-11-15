@@ -73,6 +73,10 @@ extension KeyboardViewController {
         #endif
 
         emitKeyPressFeedbackIfNeeded(for: sender)
+        // 记录字母键输入时刻，供候选焦点转移判断「是否用户正在打字」。
+        if key.count == 1, key.first?.isLetter == true {
+            lastLetterKeyInputTime = CACurrentMediaTime()
+        }
 
         let handleStartTime = CACurrentMediaTime()
         let effects = controller.handle(.insertKey(key))
