@@ -170,6 +170,13 @@ extension KeyboardViewController {
 
         Logger.shared.info("viewDidLoad, keyboardType=\(keyboardType)", category: .general)
         prepareRimeRuntimeAvailability()
+
+        // 诊断（临时）：确认键盘扩展能否通过 announcement 让 VoiceOver 出声。
+        // 键盘真正可见后播报一次固定文案；若听不到，说明该通道在此环境下不可用。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, self.view.window != nil else { return }
+            UIAccessibility.post(notification: .announcement, argument: "键盘已就绪")
+        }
         observeExtensionHostLifecycle()
         #if T9_RESPONSIVE_CANARY_INTERNAL
             observeResponsiveCanaryKillSwitch()
