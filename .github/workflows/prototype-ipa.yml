@@ -1,4 +1,4 @@
-name: 原型 IPA 构建
+﻿name: 原型 IPA 构建
 
 # 用途：为 SideStore 安装产出未签名 IPA。
 # 与上游的 swift6-quality.yml 分离，不修改、不依赖原有发布流程。
@@ -25,7 +25,7 @@ concurrency:
 jobs:
   build-ipa:
     name: 构建未签名 IPA
-    runs-on: macos-26
+    runs-on: macos-latest
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
