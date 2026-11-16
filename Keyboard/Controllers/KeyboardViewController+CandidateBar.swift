@@ -193,54 +193,31 @@ extension KeyboardViewController {
             )
         #endif
 
-        announceFirstCandidateIfNeeded(items)
+        // 候选播报由按键路径的 announceCurrentFirstCandidate 负责，
+        // 这里不再重复播报，避免同一次输入出现两条 announcement。
     }
 
-    /// 候选更新后，让 VoiceOver 读出第一个候选。
+    /// 按键后播报当前第一个候选。
     ///
-    /// 系统行为参考：iOS 原生拼音与 Android TalkBack 在输入一个字符后，
-    /// 都会直接朗读当前第一个候选，**不会把无障碍焦点移到候选上**。
-    /// 因此这里用 announcement，不移动焦点。
+    /// 直接读取 KeyboardController 的 RIME 输出，不依赖候选栏 UI 状态，
+    /// 因此不会受 UI 重建时序影响。
     ///
-    /// 关于 isVoiceOverRunning：键盘扩展里的返回值不可靠（实测 VoiceOver 已开启
-    /// 时仍可能为 false），一旦误判为 false 会整体跳过播报。而 VoiceOver 关闭时
-    /// UIAccessibility.post 本身就是 no-op，没有副作用，所以这里不做该判断。
-    ///
-    /// 去重与过期处理：
-    /// - 同一候选只播一次
-    /// - 每次递增序号；投递前复核，快速连打时旧的播报作废
-    /// - 延迟到下一主线程循环，等候选栏完成 reloadData 后再发
-    private func announceFirstCandidateIfNeeded(_ items: [CandidateItem]) {
-        // 诊断（临时）：把候选栏的实际状态播出来，确认这段代码是否执行到、
-        // 以及 items 里到底有什么。
-        let diagKinds = items.prefix(3).map { "\($0.kind)|\($0.title)" }.joined(separator: " ")
-        UIAccessibility.post(
-            notification: .announcement,
-            argument: "候选刷新 模式\(controller.state.inputMode) 数量\(items.count) 前几个[\(diagKinds)]"
+    /// 在按键路径调用（controller.handle 之后、syncUI 之前），此时 RIME 已产出
+    /// 新候选，且不与 UI 重建同帧，announcement 能稳定送达。
+    func announceCurrentFirstCandidate() {
+        guard controller.state.inputMode == .chinese else { return }
+        guard let output = controller.state.lastRimeOutput,
+            let first = output.candidates.first,
+            !first.text.isEmpty
+        else { return }
+        guard first.text != lastAnnouncedCandidateText else { return }
+
+        lastAnnouncedCandidateText = first.text
+        let spoken = CharacterDescriptionSpeech.announcement(
+            for: first.text,
+            table: CharacterDescriptionTableProvider.shared.table
         )
-
-        guard controller.state.inputMode == .chinese else {
-            lastAnnouncedCandidateText = nil
-            return
-        }
-        guard let first = items.first, first.kind == .candidate else {
-            lastAnnouncedCandidateText = nil
-            return
-        }
-        // 同一候选内容不重复播报；候选一变就播，保证「输入字符 → 读出当前候选」。
-        guard first.title != lastAnnouncedCandidateText else { return }
-
-        lastAnnouncedCandidateText = first.title
-        candidateAnnouncementSequence &+= 1
-        let sequence = candidateAnnouncementSequence
-        let spoken = CandidateCollectionCell.spokenDescription(for: first)
-        // 推迟到下一主线程循环：候选栏刚 reloadData，先让 UIKit 提交本帧。
-        // 序号不符说明期间已有更新的候选，这条直接放弃，避免读到过期内容。
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard self.candidateAnnouncementSequence == sequence else { return }
-            UIAccessibility.post(notification: .announcement, argument: spoken)
-        }
+        UIAccessibility.post(notification: .announcement, argument: spoken)
     }
 
     /// 文字真正进入输入框后，用 VoiceOver 播报上屏内容。

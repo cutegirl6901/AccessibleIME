@@ -77,11 +77,12 @@ extension KeyboardViewController {
         let handleStartTime = CACurrentMediaTime()
         let effects = controller.handle(.insertKey(key))
 
-        // 诊断（临时）：每次按键直接播报键名，用来区分「announcement 通道可用」
-        // 与「候选播报逻辑有问题」这两种情况。
-        if key.count == 1, key.first?.isLetter == true {
-            UIAccessibility.post(notification: .announcement, argument: "按键 \(key)")
-        }
+        // 按键后立即播报当前第一个候选。
+        //
+        // 放在这里而不是 fillCandidateBar：候选栏刷新发生在 syncUI 内部，
+        // 与 UI 重建同帧，实测 announcement 会被系统丢弃或打断；
+        // 而按键路径的播报稳定有效（已由诊断确认）。
+        announceCurrentFirstCandidate()
         #if DEBUG
             T9QA001DeviceTrace.shared.record(.returned, owner: self)
         #endif
