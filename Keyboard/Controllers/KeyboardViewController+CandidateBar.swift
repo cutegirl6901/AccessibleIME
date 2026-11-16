@@ -211,6 +211,14 @@ extension KeyboardViewController {
     /// - 每次递增序号；投递前复核，快速连打时旧的播报作废
     /// - 延迟到下一主线程循环，等候选栏完成 reloadData 后再发
     private func announceFirstCandidateIfNeeded(_ items: [CandidateItem]) {
+        // 诊断（临时）：把候选栏的实际状态播出来，确认这段代码是否执行到、
+        // 以及 items 里到底有什么。
+        let diagKinds = items.prefix(3).map { "\($0.kind)|\($0.title)" }.joined(separator: " ")
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: "候选刷新 模式\(controller.state.inputMode) 数量\(items.count) 前几个[\(diagKinds)]"
+        )
+
         guard controller.state.inputMode == .chinese else {
             lastAnnouncedCandidateText = nil
             return
