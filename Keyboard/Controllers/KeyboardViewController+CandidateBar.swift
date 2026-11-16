@@ -205,27 +205,28 @@ extension KeyboardViewController {
     /// 在按键路径调用（controller.handle 之后、syncUI 之前），此时 RIME 已产出
     /// 新候选，且不与 UI 重建同帧，announcement 能稳定送达。
     func announceCurrentFirstCandidate() {
-        // 诊断（临时）：报告此刻的状态，区分「非中文模式」「无 RIME 输出」「无候选」三种情况。
+        // 诊断（临时）：只发一条播报，避免两条公告互相打断。
+        // 候选数量放在最前面，确保能听清。
         let mode = controller.state.inputMode
+        guard mode == .chinese else {
+            UIAccessibility.post(notification: .announcement, argument: "模式\(mode)")
+            return
+        }
         let outputCount = controller.state.lastRimeOutput?.candidates.count ?? -1
-        UIAccessibility.post(
-            notification: .announcement,
-            argument: "播报检查 模式\(mode) 候选数\(outputCount)"
-        )
-
-        guard controller.state.inputMode == .chinese else { return }
         guard let output = controller.state.lastRimeOutput,
             let first = output.candidates.first,
             !first.text.isEmpty
-        else { return }
-        guard first.text != lastAnnouncedCandidateText else { return }
+        else {
+            UIAccessibility.post(notification: .announcement, argument: "零候选")
+            return
+        }
 
         lastAnnouncedCandidateText = first.text
         let spoken = CharacterDescriptionSpeech.announcement(
             for: first.text,
             table: CharacterDescriptionTableProvider.shared.table
         )
-        UIAccessibility.post(notification: .announcement, argument: spoken)
+        UIAccessibility.post(notification: .announcement, argument: "\(outputCount)个 \(spoken)")
     }
 
     /// 文字真正进入输入框后，用 VoiceOver 播报上屏内容。
