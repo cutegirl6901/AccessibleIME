@@ -193,100 +193,31 @@ extension KeyboardViewController {
             )
         #endif
 
-        // 候选播报由按键路径的 announceCurrentFirstCandidate 负责，
-        // 这里不再重复播报，避免同一次输入出现两条 announcement。
     }
 
-    /// 按键后播报当前第一个候选。
+    /// 文字真正进入输入框后，用 VoiceOver 播报「词 + 逐字解释」。
     ///
-    /// 直接读取 KeyboardController 的 RIME 输出，不依赖候选栏 UI 状态，
-    /// 因此不会受 UI 重建时序影响。
+    /// 这是纯键盘输入唯一的逐字反馈点：用户按空格或回车确认候选时，
+    /// KeyboardController 以 .space / .returnKey 为来源提交文本；触摸候选则
+    /// 走 .candidate。两条路径最终都经过这里，因此逐字反馈只需实现一次。
     ///
-    /// 在按键路径调用（controller.handle 之后、syncUI 之前），此时 RIME 已产出
-    /// 新候选，且不与 UI 重建同帧，announcement 能稳定送达。
-    func announceCurrentFirstCandidate() {
-        guard controller.state.inputMode == .chinese else { return }
-        guard let output = controller.state.lastRimeOutput,
-            let first = output.candidates.first,
-            !first.text.isEmpty
-        else { return }
-        guard first.text != lastAnnouncedCandidateText else { return }
-
-        lastAnnouncedCandidateText = first.text
-        candidateAnnouncementSequence &+= 1
-        let sequence = candidateAnnouncementSequence
-        let spoken = CharacterDescriptionSpeech.announcement(
-            for: first.text,
-            table: CharacterDescriptionTableProvider.shared.table
-        )
-
-        // 延迟后再播报：按键瞬间 VoiceOver 会读出按键标签（如「n」），
-        // 立即 post 会与之互相打断。等它读完再发候选，两者依次播报。
-        // 序号校验保证期间有新按键时，本条作废。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-            guard let self else { return }
-            guard self.candidateAnnouncementSequence == sequence else { return }
-            UIAccessibility.post(notification: .announcement, argument: spoken)
-        }
-    }
-
-    /// 文字真正进入输入框后，用 VoiceOver 播报上屏内容。
-    ///
-    /// 与候选播报的分工：候选刷新时已播过「词 + 逐字解释」，
-    /// 这里只播上屏的词本身，避免同一段解释被连续读两遍。
-    /// 若解释尚未播过（例如直接选词、输入法自行提交），则补上解释。
-    ///
-    /// 只对中文的候选/纠错/引擎提交播报；字母、标点、空格、回车不播报。
-    ///
-    /// 注意：键盘扩展里 UIAccessibility.post(.announcement) 实测不生效（见
-    /// announceFirstCandidateIfNeeded 的说明）。上屏后候选栏已清空，没有可转移
-    /// 焦点的候选格，因此这里保留 announcement 调用作为向前兼容，不依赖它。
-    /// 上屏内容通常由宿主输入框自身的文本变化被 VoiceOver 感知。
+    /// 决策逻辑放在 CommittedTextAnnouncement（纯函数、有单测覆盖），
+    /// 这里只负责投递通知。
     func announceCommittedTextIfNeeded(_ event: CommittedTextEvent) {
-        // 同候选播报：不使用 isVoiceOverRunning 判断（扩展里返回值不可靠），
-        // VoiceOver 关闭时 post 本身是 no-op。
-        guard shouldAnnounceCommit(event.source) else { return }
-
-        let text = event.text
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        // 只播报含汉字的内容，避免朗读标点或拉丁串。
-        guard containsCJKCharacter(text) else { return }
-
-        let spoken: String
-        // 与候选播报共用去重会互相污染：上屏写入后，再把同一候选打出来
-        // 会被误判为重复而不播报。这里用独立变量，并且只在文本重复时省略解释。
-        if text == lastAnnouncedCommittedText {
-            spoken = text
-        } else {
-            spoken = CharacterDescriptionSpeech.announcement(
-                for: text,
+        // 不使用 isVoiceOverRunning 判断：键盘扩展里该返回值不可靠，
+        // VoiceOver 关闭时 post 本身是 no-op，没有副作用。
+        guard
+            let spoken = CommittedTextAnnouncement.announcement(
+                for: event.text,
+                source: event.source,
+                lastAnnounced: lastAnnouncedCommittedText,
                 table: CharacterDescriptionTableProvider.shared.table
             )
-        }
+        else { return }
+
         candidateAnnouncementSequence &+= 1
-        lastAnnouncedCommittedText = text
+        lastAnnouncedCommittedText = event.text
         UIAccessibility.post(notification: .announcement, argument: spoken)
-    }
-
-    /// 是否包含汉字（基本区 / 扩展 A 区）。用于过滤不应朗读的提交。
-    private func containsCJKCharacter(_ text: String) -> Bool {
-        for scalar in text.unicodeScalars {
-            let v = scalar.value
-            if (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v) {
-                return true
-            }
-        }
-        return false
-    }
-
-    /// 需要朗读提交结果的来源。
-    private func shouldAnnounceCommit(_ source: CommittedTextSource) -> Bool {
-        switch source {
-        case .candidate, .correction, .engineCommit, .compositionFinalization:
-            return true
-        case .key, .space, .returnKey, .directText, .emoji:
-            return false
-        }
     }
 
     func appendToCandidateBar(insertedCount: Int? = nil) {

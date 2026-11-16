@@ -77,12 +77,6 @@ extension KeyboardViewController {
         let handleStartTime = CACurrentMediaTime()
         let effects = controller.handle(.insertKey(key))
 
-        // 按键后立即播报当前第一个候选。
-        //
-        // 放在这里而不是 fillCandidateBar：候选栏刷新发生在 syncUI 内部，
-        // 与 UI 重建同帧，实测 announcement 会被系统丢弃或打断；
-        // 而按键路径的播报稳定有效（已由诊断确认）。
-        announceCurrentFirstCandidate()
         #if DEBUG
             T9QA001DeviceTrace.shared.record(.returned, owner: self)
         #endif
