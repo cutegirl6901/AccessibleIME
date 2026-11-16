@@ -205,28 +205,29 @@ extension KeyboardViewController {
     /// 在按键路径调用（controller.handle 之后、syncUI 之前），此时 RIME 已产出
     /// 新候选，且不与 UI 重建同帧，announcement 能稳定送达。
     func announceCurrentFirstCandidate() {
-        // 诊断（临时）：只发一条播报，避免两条公告互相打断。
-        // 候选数量放在最前面，确保能听清。
-        let mode = controller.state.inputMode
-        guard mode == .chinese else {
-            UIAccessibility.post(notification: .announcement, argument: "模式\(mode)")
-            return
-        }
-        let outputCount = controller.state.lastRimeOutput?.candidates.count ?? -1
+        guard controller.state.inputMode == .chinese else { return }
         guard let output = controller.state.lastRimeOutput,
             let first = output.candidates.first,
             !first.text.isEmpty
-        else {
-            UIAccessibility.post(notification: .announcement, argument: "零候选")
-            return
-        }
+        else { return }
+        guard first.text != lastAnnouncedCandidateText else { return }
 
         lastAnnouncedCandidateText = first.text
+        candidateAnnouncementSequence &+= 1
+        let sequence = candidateAnnouncementSequence
         let spoken = CharacterDescriptionSpeech.announcement(
             for: first.text,
             table: CharacterDescriptionTableProvider.shared.table
         )
-        UIAccessibility.post(notification: .announcement, argument: "\(outputCount)个 \(spoken)")
+
+        // 延迟后再播报：按键瞬间 VoiceOver 会读出按键标签（如「n」），
+        // 立即 post 会与之互相打断。等它读完再发候选，两者依次播报。
+        // 序号校验保证期间有新按键时，本条作废。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self else { return }
+            guard self.candidateAnnouncementSequence == sequence else { return }
+            UIAccessibility.post(notification: .announcement, argument: spoken)
+        }
     }
 
     /// 文字真正进入输入框后，用 VoiceOver 播报上屏内容。
