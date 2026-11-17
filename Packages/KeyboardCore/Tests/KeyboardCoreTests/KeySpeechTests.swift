@@ -69,7 +69,7 @@ final class KeySpeechTests: XCTestCase {
     }
 
     func testEnglishLetterReadsKeyOnly() {
-        let s = snapshot(inputMode: .english, keyLabel: "a", candidates: ["你"])
+        let s = snapshot(keyLabel: "a", inputMode: .english, candidates: ["你"])
         XCTAssertEqual(KeySpeechComposer.compose(s, detail: .standard, table: table), "a")
     }
 
