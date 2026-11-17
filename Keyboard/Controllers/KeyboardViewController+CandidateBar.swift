@@ -195,56 +195,6 @@ extension KeyboardViewController {
 
     }
 
-    /// 按键后立即朗读当前第一个候选。
-    ///
-    /// 为什么直接朗读而不是移动焦点：
-    /// - 每次按键后候选栏都会 reloadData，获得焦点的 cell 会被复用或销毁，
-    ///   VoiceOver 必须重扫整棵键盘无障碍树才能重新定位，实测要等好几秒。
-    /// - 焦点一旦停在候选上，后续按键的朗读会被抢走，连续输入明显变慢。
-    /// - 朗读不改变焦点：愿意听就听完；想继续打字，下一次朗读会自然
-    ///   打断上一句，这正是期望的交互。
-    ///
-    /// 时机：必须等候选栏刷新完成后再读，否则读到的是上一次的候选，
-    /// 而与 reloadData 同帧发出的朗读会被系统丢弃。因此这里延后到
-    /// 下一次主线程循环，并且调用点放在 syncUI 之后。
-    ///
-    /// 去重：同一拼音下的同一候选不重复朗读（例如连按 shift）；
-    /// 组合结束后清空标记，保证「再输入同一个词」仍然会朗读。
-    func announceFirstCandidateAfterKeypress() {
-        guard controller.state.inputMode == .chinese else {
-            lastSpokenCandidateKey = nil
-            return
-        }
-        guard let output = controller.state.lastRimeOutput,
-            let first = output.candidates.first,
-            !first.text.isEmpty
-        else {
-            // 组合结束（已上屏或已清空）：下一次输入同一个词要重新朗读。
-            lastSpokenCandidateKey = nil
-            return
-        }
-        // 候选面板展开时用户正在面板里逐项浏览，不播报候选栏首项。
-        guard !isCandidateExpanded else { return }
-        guard !shouldBlockT9RecoveryPresentation else { return }
-
-        let key = (output.rawInput ?? "") + "\u{1}" + first.text
-        guard key != lastSpokenCandidateKey else { return }
-
-        let spoken = CharacterDescriptionSpeech.announcement(
-            for: first.text,
-            table: CharacterDescriptionTableProvider.shared.table
-        )
-        candidateAnnouncementSequence &+= 1
-        let sequence = candidateAnnouncementSequence
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard self.candidateAnnouncementSequence == sequence else { return }
-            self.lastSpokenCandidateKey = key
-            UIAccessibility.post(notification: .announcement, argument: spoken)
-        }
-    }
-
     /// 文字真正进入输入框后，用 VoiceOver 播报「词 + 逐字解释」。
     ///
     /// 这是纯键盘输入唯一的逐字反馈点：用户按空格或回车确认候选时，

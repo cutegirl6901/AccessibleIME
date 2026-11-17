@@ -75,7 +75,7 @@ struct SettingsTab: View {
     private var inputBehaviorSection: some View {
         SettingsGroup(
             title: "输入体验",
-            footer: "布局、反馈、删除键和纠错都只影响本机打字习惯，可以随时改回来。这些不是人工智能功能。"
+            footer: "布局、反馈、删除键、按键播报和纠错都只影响本机打字习惯，可以随时改回来。这些不是人工智能功能。"
         ) {
             SettingsNavigationLink(
                 systemImage: "keyboard",
@@ -99,6 +99,14 @@ struct SettingsTab: View {
                 subtitle: "垃圾桶、滑动擦除、组字左滑"
             ) {
                 DeleteKeySettingsView()
+            }
+
+            SettingsNavigationLink(
+                systemImage: "speaker.wave.2",
+                title: "按键播报",
+                subtitle: "按键后朗读候选、上屏与删除内容"
+            ) {
+                KeySpeechSettingsView()
             }
 
             SettingsNavigationLink(

@@ -5,8 +5,10 @@ extension KeyboardViewController {
     @objc func toggleShift(_ sender: UIButton) {
         guard !isKeyboardHeightAdjusting else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.toggleShift)
         syncUI(with: effects)
+        speakStateChange(.shift, sequence: speechSequence)
     }
 
     @objc func toggleKeyboardPage(_ sender: UIButton) {
@@ -98,6 +100,7 @@ extension KeyboardViewController {
         // This must run even without composition: an old delayed recall is still stale
         // once the input-mode contract changes.
         typoCorrectionRecallCoordinator.invalidateTypoCorrectionRecall()
+        let speechSequence = beginKeySpeechEvent()
         var effects = controller.handle(.toggleInputMode)
 
         if controller.state.inputMode == .english {
@@ -107,6 +110,7 @@ extension KeyboardViewController {
         }
 
         syncUI(with: effects)
+        speakStateChange(.inputMode, sequence: speechSequence)
     }
 
     @objc func candidatePageUp() {
@@ -126,14 +130,19 @@ extension KeyboardViewController {
     @objc func insertSpace(_ sender: UIButton) {
         guard !isKeyboardHeightAdjusting else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertSpace)
         syncUI(with: effects)
+        // 有上屏文本就播报上屏内容（含逐字解释），否则读「空格」。
+        speakCommit(kind: .space, keyLabel: "空格", committedText: nil, sequence: speechSequence)
     }
 
     @objc func insertReturn(_ sender: UIButton) {
         guard !isKeyboardHeightAdjusting else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertReturn)
         syncUI(with: effects)
+        speakCommit(kind: .returnKey, keyLabel: "回车", committedText: nil, sequence: speechSequence)
     }
 }

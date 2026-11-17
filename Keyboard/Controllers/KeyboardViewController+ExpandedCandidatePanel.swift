@@ -642,6 +642,7 @@ extension KeyboardViewController {
         }
         emitFeedback(for: .commit)
         beginCandidateTrace(.expanded)
+        let speechSequence = beginKeySpeechEvent()
         let effects: KeyboardEffect
         if let correction = item.correction {
             effects = controller.handle(.insertCorrectionCandidate(correction))
@@ -662,5 +663,12 @@ extension KeyboardViewController {
         updateExpandButtonAppearance()
         dismissExpandedCandidatePanel(animated: true)
         syncUI(with: effects)
+        // 面板里选词后朗读上屏内容；不要等焦点朗读，因为面板已关闭。
+        speakCommit(
+            kind: .candidate,
+            keyLabel: item.title,
+            committedText: controller.state.lastRimeOutput?.committedText ?? item.title,
+            sequence: speechSequence
+        )
     }
 }

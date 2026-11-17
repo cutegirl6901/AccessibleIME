@@ -75,6 +75,8 @@ extension KeyboardViewController {
         emitKeyPressFeedbackIfNeeded(for: sender)
 
         let handleStartTime = CACurrentMediaTime()
+        // 推进按键序号；播报归属据此判定，过期的直接丢弃。
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertKey(key))
 
         #if DEBUG
@@ -133,9 +135,8 @@ extension KeyboardViewController {
 
         let uiStartTime = CACurrentMediaTime()
         syncUI(with: effects)
-        // 候选栏刷新完成后再朗读首个候选：与 reloadData 同帧发出的朗读会被
-        // 系统丢弃，也可能读到上一次的候选。
-        announceFirstCandidateAfterKeypress()
+        // 候选栏刷新完成后立刻快照并播报这一次按键的结果（不移动焦点）。
+        speakInsertKey(key, sequence: speechSequence)
         let endTime = CACurrentMediaTime()
         let uiMs = (endTime - uiStartTime) * 1000
         let totalMs = (endTime - startTime) * 1000
@@ -196,8 +197,17 @@ extension KeyboardViewController {
         guard !isKeyboardHeightAdjusting else { return }
         guard let text = sender.title(for: .normal) else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertDirectText(text))
         syncUI(with: effects)
+        // 直接文本（emoji、智能引号）按上屏内容播报；分类复用 insertKey 的规则，
+        // 这样智能引号能查到标点名称，emoji 则直接读字符。
+        speakCommit(
+            kind: KeySpeechComposer.classify(key: text),
+            keyLabel: text,
+            committedText: text,
+            sequence: speechSequence
+        )
     }
 
     @objc func insertSmartDoubleQuote(_ sender: UIButton) {

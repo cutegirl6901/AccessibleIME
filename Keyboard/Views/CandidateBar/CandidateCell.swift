@@ -366,9 +366,16 @@ final class CandidateCollectionCell: UICollectionViewCell {
         if item.kind == .composition {
             return "提交拼音 \(item.title)"
         }
-        return CharacterDescriptionSpeech.announcement(
-            for: item.title,
-            table: CharacterDescriptionTableProvider.shared.table
+        // 与按键播报共用同一套生成逻辑：词 +（可选读音）+ 逐字解释。
+        // 数据全部来自 CharacterDescriptionTable / RIME comment，不写死释义。
+        let table = CharacterDescriptionTableProvider.shared.table
+        let speech = KeySpeechComposer.referentSpeech(
+            item.title,
+            comment: item.comment,
+            detail: .standard,
+            table: table
         )
+        // 探索时的提示与按键播报分开：提示不参与上面的朗读文本拼接。
+        return speech
     }
 }

@@ -352,6 +352,10 @@ extension KeyboardViewController {
         let before = textDocumentProxy.documentContextBeforeInput ?? ""
         let hadText = textDocumentProxy.hasText
         let preedit = hasActivePreedit
+        // 必须在删除前记下拼音串：删除后状态里已经没有被删掉的那个字母。
+        let preeditBefore = controller.state.lastRimeOutput?.rawInput
+            ?? controller.state.currentComposition
+        let speechSequence = beginKeySpeechEvent()
         var effects =
             oneGraphemeBeforeCursor
             ? controller.deleteOneGraphemeBeforeCursor()
@@ -375,6 +379,16 @@ extension KeyboardViewController {
         if shouldEmitFeedback, observed {
             deleteRepeatEffectiveFeedbackCount += 1
             playRepeatFeedback(effectiveDeleteCount: deleteRepeatEffectiveFeedbackCount)
+            // 朗读这次真正删掉的内容：拼音用「删除前 - 删除后」的差量，
+            // 已上屏文本用光标前文本的差量。
+            let deleted = preedit
+                ? deletedSuffix(
+                    before: preeditBefore,
+                    after: controller.state.lastRimeOutput?.rawInput
+                        ?? controller.state.currentComposition
+                )
+                : deletedSuffix(before: before, after: after)
+            speakDelete(deletedText: deleted, sequence: speechSequence)
         }
         return observed
     }
@@ -477,5 +491,22 @@ extension KeyboardViewController {
 
     func resetDeleteRepeatFeedback() {
         deleteRepeatEffectiveFeedbackCount = 0
+    }
+
+    /// 取删除前文本里、删除后已消失的片段。
+    ///
+    /// 从尾部对齐：删除总是发生在光标前，尾部差量才是最可靠的部分。
+    /// 同时兼容「删中间」这类情况，取最长的尾部差异。
+    func deletedSuffix(before: String, after: String) -> String? {
+        if before.isEmpty || before == after { return nil }
+        // 删除总是发生在光标前，因此 after 是 before 的前缀，
+        // 被删掉的是 before 末尾那段。
+        guard after.count < before.count, before.hasPrefix(after) else {
+            // 非尾部删除（例如从左往右擦除）：无法安全推断内容，宁可不播报，
+            // 也不要编造一个假的删除内容。
+            return nil
+        }
+        let removed = String(before.dropFirst(after.count))
+        return removed.isEmpty ? nil : removed
     }
 }

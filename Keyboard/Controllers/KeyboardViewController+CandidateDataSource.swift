@@ -253,6 +253,7 @@ extension KeyboardViewController: UICollectionViewDataSource, UICollectionViewDe
         }
         emitFeedback(for: .commit)
         beginCandidateTrace(.compact)
+        let speechSequence = beginKeySpeechEvent()
         let effects: KeyboardEffect
         if let correction = item.correction {
             effects = controller.handle(.insertCorrectionCandidate(correction))
@@ -267,6 +268,13 @@ extension KeyboardViewController: UICollectionViewDataSource, UICollectionViewDe
         }
         endCandidateTrace()
         syncUI(with: effects)
+        // 选词后朗读真正上屏的内容（含逐字解释），而不是候选栏首项。
+        speakCommit(
+            kind: .candidate,
+            keyLabel: item.title,
+            committedText: controller.state.lastRimeOutput?.committedText ?? item.title,
+            sequence: speechSequence
+        )
     }
 
     private func isPreferredCandidate(_ item: CandidateItem, at index: Int) -> Bool {

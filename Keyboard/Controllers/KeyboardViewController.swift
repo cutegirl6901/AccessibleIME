@@ -265,8 +265,8 @@ class KeyboardViewController: UIInputViewController {
     var candidateSnapshotOrigin: RimeOutputOrigin?
     /// 候选播报序号；递增后旧公告作废，防止快速输入时读到过期内容。
     var candidateAnnouncementSequence: UInt64 = 0
-    /// 上一次朗读过的（拼音, 候选）组合，避免同一候选重复朗读。
-    var lastSpokenCandidateKey: String?
+    /// 按键即读：序号、投递模式与严格排队状态都封装在这里。
+    let keySpeechAnnouncer = KeySpeechAnnouncer()
     /// 上一次播报过的上屏文本。与候选去重分开，避免上屏写入后
     /// 把「同一候选再次出现」误判为重复而不播报。
     var lastAnnouncedCommittedText: String?
@@ -505,6 +505,8 @@ class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // 每次键盘出现时读一次播报设置；主 App 与本扩展不共享容器，各读本地存储。
+        refreshKeySpeechSettings()
         commitTrace.enabled = Logger.isLiveCategoryEnabled(.display)
         prepareCandidateFontForAppearance()
         keyboardHeightAdjustmentAcceptsMarkers = true
@@ -614,6 +616,8 @@ class KeyboardViewController: UIInputViewController {
     }
 
     override func viewWillDisappear(_ animated: Bool) {
+        // 丢弃未播完的队列，避免下次出现时念上次的残留内容。
+        resetKeySpeech()
         commitTrace.close(.disappear)
         commitTrace.enabled = false
         super.viewWillDisappear(animated)
