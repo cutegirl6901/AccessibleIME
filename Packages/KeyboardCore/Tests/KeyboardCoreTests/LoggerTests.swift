@@ -131,17 +131,17 @@ final class LoggerTests: XCTestCase {
     }
 
     #if DEBUG
-    func testDevicePreflightRecordBypassesDisabledCategory() async {
-        let logger = makeLogger { _ in false }
+        func testDevicePreflightRecordBypassesDisabledCategory() async {
+            let logger = makeLogger { _ in false }
 
-        logger.info("filtered", category: .performance)
-        logger.devicePreflightPerformance("mandatory")
-        logger.requestFlush()
+            logger.info("filtered", category: .performance)
+            logger.devicePreflightPerformance("mandatory")
+            logger.requestFlush()
 
-        let snapshot = await logger.snapshotForTesting()
-        XCTAssertEqual(snapshot.persistedLines.count, 1)
-        XCTAssertTrue(snapshot.persistedLines[0].hasSuffix("mandatory"))
-    }
+            let snapshot = await logger.snapshotForTesting()
+            XCTAssertEqual(snapshot.persistedLines.count, 1)
+            XCTAssertTrue(snapshot.persistedLines[0].hasSuffix("mandatory"))
+        }
     #endif
 
     @available(macOS 15.0, *)
