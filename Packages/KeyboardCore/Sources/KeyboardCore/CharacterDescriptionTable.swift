@@ -48,9 +48,11 @@ extension CharacterDescriptionTable {
             body.removeFirst()
         }
 
-        for rawLine in body.split(separator: "\n", omittingEmptySubsequences: false) {
-            var line = String(rawLine)
-            if line.hasSuffix("\r") { line.removeLast() }
+        // 按行切分必须用 unicodeScalars 视角的换行，而不是 Character：
+        // Swift 把 CRLF 当作单个字素簇，`split(separator: "\n")` 永远匹配不到它，
+        // 会把整份 CRLF 字典当成一行解析。字典文件来自 Windows 工具链，是 CRLF。
+        for rawLine in body.split(whereSeparator: { $0.isNewline }) {
+            let line = String(rawLine)
             if line.isEmpty || line.hasPrefix("#") { continue }
 
             let columns = line.split(separator: "\t", omittingEmptySubsequences: false)

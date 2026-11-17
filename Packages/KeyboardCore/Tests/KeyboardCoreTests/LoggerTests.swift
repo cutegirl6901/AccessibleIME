@@ -69,7 +69,9 @@ final class LoggerTests: XCTestCase {
     }
 
     func testLiveCategoryToggleRequiresGlobalAndCategorySwitches() {
-        let defaults = UserDefaults(suiteName: Logger.appGroupID)
+        // 原型已关闭 App Group，Logger 从标准存储读取；测试必须写同一处，
+        // 否则设置写在 App Group 套件里，读的却是标准存储，断言必然失败。
+        let defaults = Logger.resolvedDefaults
         let categoryKey = Logger.categoryToggleKey(for: .display)
         let originalGlobal = defaults?.object(forKey: Logger.toggleKey)
         let originalCategory = defaults?.object(forKey: categoryKey)

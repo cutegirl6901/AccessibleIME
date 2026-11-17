@@ -12,9 +12,12 @@ docs/evidence/keyboard-t9-adaptive-row-001/review-remediation-20261021/before.lo
 docs/evidence/keyboard-t9-adaptive-row-001/review-remediation-20261021/original-fix.patch whitespace=-blank-at-eol
 docs/evidence/keyboard-t9-adaptive-row-001/review-remediation-20261021/revision.patch whitespace=-blank-at-eol
 
-# 以下三个文件的索引内容是 CRLF；git diff --check 会把 \r 当成行尾空白，
-# 每次改版本号或改这两处源码都会被 CI 误判为 trailing whitespace。
-# cr-at-eol 让 \r 不算行尾空白，同时仍然检查真实的尾随空格。
-Keyboard/Controllers/KeyboardViewController.swift whitespace=cr-at-eol
-Keyboard/Controllers/KeyboardViewController+Bootstrap.swift whitespace=cr-at-eol
+# Swift 源码统一使用 LF：swift-format 会把 CRLF 的 \r 当成尾随空格，
+# 导致整个文件被报 TrailingWhitespace（源码本身没有多余空白）。
+# 历史上 KeyboardViewController.swift 与其 Bootstrap 分片是 CRLF，这里固化例外。
+*.swift text eol=lf
+
+# 工程文件保持 CRLF（Xcode 习惯），并让 \r 不被算作行尾空白，
+# 否则每次改版本号都会被 git diff --check 误判为 trailing whitespace。
+# 真实尾随空格仍然会被检查。
 "Universe Keyboard.xcodeproj/project.pbxproj" whitespace=cr-at-eol
