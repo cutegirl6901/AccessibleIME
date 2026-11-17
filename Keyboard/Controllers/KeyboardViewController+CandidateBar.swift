@@ -195,41 +195,53 @@ extension KeyboardViewController {
 
     }
 
-    /// 按键后把 VoiceOver 焦点移到候选栏第一格。
+    /// 按键后立即朗读当前第一个候选。
     ///
-    /// 为什么用焦点转移而不是 announcement：
-    /// - 键盘扩展里 announcement 实测不稳定（有时完全收不到）
-    /// - 候选格本身已有正确的 accessibilityLabel（「你，你们的你」），
-    ///   焦点移过去 VoiceOver 必然朗读
+    /// 为什么直接朗读而不是移动焦点：
+    /// - 每次按键后候选栏都会 reloadData，获得焦点的 cell 会被复用或销毁，
+    ///   VoiceOver 必须重扫整棵键盘无障碍树才能重新定位，实测要等好几秒。
+    /// - 焦点一旦停在候选上，后续按键的朗读会被抢走，连续输入明显变慢。
+    /// - 朗读不改变焦点：愿意听就听完；想继续打字，下一次朗读会自然
+    ///   打断上一句，这正是期望的交互。
     ///
-    /// 时机：按键触发 → RIME 产出新候选 → 候选栏 reloadData → 焦点转移。
-    /// 因此必须等 UI 更新完成后再取 cell，这里推迟到下一主线程循环。
+    /// 时机：必须等候选栏刷新完成后再读，否则读到的是上一次的候选，
+    /// 而与 reloadData 同帧发出的朗读会被系统丢弃。因此这里延后到
+    /// 下一次主线程循环，并且调用点放在 syncUI 之后。
     ///
-    /// 去重：同一候选不重复转移；序号保证快速输入时旧请求作废。
-    func focusFirstCandidateAfterKeypress() {
-        guard controller.state.inputMode == .chinese else { return }
+    /// 去重：同一拼音下的同一候选不重复朗读（例如连按 shift）；
+    /// 组合结束后清空标记，保证「再输入同一个词」仍然会朗读。
+    func announceFirstCandidateAfterKeypress() {
+        guard controller.state.inputMode == .chinese else {
+            lastSpokenCandidateKey = nil
+            return
+        }
         guard let output = controller.state.lastRimeOutput,
             let first = output.candidates.first,
             !first.text.isEmpty
-        else { return }
-        guard first.text != lastFocusedCandidateText else { return }
+        else {
+            // 组合结束（已上屏或已清空）：下一次输入同一个词要重新朗读。
+            lastSpokenCandidateKey = nil
+            return
+        }
+        // 候选面板展开时用户正在面板里逐项浏览，不播报候选栏首项。
+        guard !isCandidateExpanded else { return }
+        guard !shouldBlockT9RecoveryPresentation else { return }
 
-        lastFocusedCandidateText = first.text
+        let key = (output.rawInput ?? "") + "\u{1}" + first.text
+        guard key != lastSpokenCandidateKey else { return }
+
+        let spoken = CharacterDescriptionSpeech.announcement(
+            for: first.text,
+            table: CharacterDescriptionTableProvider.shared.table
+        )
         candidateAnnouncementSequence &+= 1
         let sequence = candidateAnnouncementSequence
 
-        // 候选栏在 syncUI 中重建；等它完成布局后再取 cell。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             guard self.candidateAnnouncementSequence == sequence else { return }
-            // 候选面板展开时焦点属于面板，不抢占。
-            guard !self.isCandidateExpanded else { return }
-            guard let collectionView = self.candidateCollectionView else { return }
-            guard collectionView.numberOfItems(inSection: 0) > 0 else { return }
-            collectionView.layoutIfNeeded()
-            let indexPath = IndexPath(item: 0, section: 0)
-            guard let cell = collectionView.cellForItem(at: indexPath) else { return }
-            UIAccessibility.post(notification: .layoutChanged, argument: cell)
+            self.lastSpokenCandidateKey = key
+            UIAccessibility.post(notification: .announcement, argument: spoken)
         }
     }
 

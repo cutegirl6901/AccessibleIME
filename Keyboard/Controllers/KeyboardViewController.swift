@@ -265,8 +265,8 @@ class KeyboardViewController: UIInputViewController {
     var candidateSnapshotOrigin: RimeOutputOrigin?
     /// 候选播报序号；递增后旧公告作废，防止快速输入时读到过期内容。
     var candidateAnnouncementSequence: UInt64 = 0
-    /// 上一次把 VoiceOver 焦点移过去的候选文本，避免同一候选重复抢焦点。
-    var lastFocusedCandidateText: String?
+    /// 上一次朗读过的（拼音, 候选）组合，避免同一候选重复朗读。
+    var lastSpokenCandidateKey: String?
     /// 上一次播报过的上屏文本。与候选去重分开，避免上屏写入后
     /// 把「同一候选再次出现」误判为重复而不播报。
     var lastAnnouncedCommittedText: String?
