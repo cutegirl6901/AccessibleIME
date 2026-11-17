@@ -195,6 +195,44 @@ extension KeyboardViewController {
 
     }
 
+    /// 按键后把 VoiceOver 焦点移到候选栏第一格。
+    ///
+    /// 为什么用焦点转移而不是 announcement：
+    /// - 键盘扩展里 announcement 实测不稳定（有时完全收不到）
+    /// - 候选格本身已有正确的 accessibilityLabel（「你，你们的你」），
+    ///   焦点移过去 VoiceOver 必然朗读
+    ///
+    /// 时机：按键触发 → RIME 产出新候选 → 候选栏 reloadData → 焦点转移。
+    /// 因此必须等 UI 更新完成后再取 cell，这里推迟到下一主线程循环。
+    ///
+    /// 去重：同一候选不重复转移；序号保证快速输入时旧请求作废。
+    func focusFirstCandidateAfterKeypress() {
+        guard controller.state.inputMode == .chinese else { return }
+        guard let output = controller.state.lastRimeOutput,
+            let first = output.candidates.first,
+            !first.text.isEmpty
+        else { return }
+        guard first.text != lastFocusedCandidateText else { return }
+
+        lastFocusedCandidateText = first.text
+        candidateAnnouncementSequence &+= 1
+        let sequence = candidateAnnouncementSequence
+
+        // 候选栏在 syncUI 中重建；等它完成布局后再取 cell。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self else { return }
+            guard self.candidateAnnouncementSequence == sequence else { return }
+            // 候选面板展开时焦点属于面板，不抢占。
+            guard !self.isCandidateExpanded else { return }
+            guard let collectionView = self.candidateCollectionView else { return }
+            guard collectionView.numberOfItems(inSection: 0) > 0 else { return }
+            collectionView.layoutIfNeeded()
+            let indexPath = IndexPath(item: 0, section: 0)
+            guard let cell = collectionView.cellForItem(at: indexPath) else { return }
+            UIAccessibility.post(notification: .layoutChanged, argument: cell)
+        }
+    }
+
     /// 文字真正进入输入框后，用 VoiceOver 播报「词 + 逐字解释」。
     ///
     /// 这是纯键盘输入唯一的逐字反馈点：用户按空格或回车确认候选时，
@@ -204,11 +242,6 @@ extension KeyboardViewController {
     /// 决策逻辑放在 CommittedTextAnnouncement（纯函数、有单测覆盖），
     /// 这里只负责投递通知。
     func announceCommittedTextIfNeeded(_ event: CommittedTextEvent) {
-        // 诊断（临时）：先无条件播报，确认回调是否进入。
-        UIAccessibility.post(
-            notification: .announcement,
-            argument: "收到提交 \(event.source) 文本\(event.text.count)字"
-        )
         // 不使用 isVoiceOverRunning 判断：键盘扩展里该返回值不可靠，
         // VoiceOver 关闭时 post 本身是 no-op，没有副作用。
         guard

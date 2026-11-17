@@ -77,6 +77,11 @@ extension KeyboardViewController {
         let handleStartTime = CACurrentMediaTime()
         let effects = controller.handle(.insertKey(key))
 
+        // 按键后把旁白焦点移到第一个候选格，VoiceOver 会朗读该格的
+        // accessibilityLabel（词 + 逐字解释）。这是「只打字、不摸候选」时
+        // 获得逐字反馈的路径。
+        focusFirstCandidateAfterKeypress()
+
         #if DEBUG
             T9QA001DeviceTrace.shared.record(.returned, owner: self)
         #endif
