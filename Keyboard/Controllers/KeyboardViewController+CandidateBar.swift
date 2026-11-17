@@ -204,6 +204,11 @@ extension KeyboardViewController {
     /// 决策逻辑放在 CommittedTextAnnouncement（纯函数、有单测覆盖），
     /// 这里只负责投递通知。
     func announceCommittedTextIfNeeded(_ event: CommittedTextEvent) {
+        // 诊断（临时）：先无条件播报，确认回调是否进入。
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: "收到提交 \(event.source) 文本\(event.text.count)字"
+        )
         // 不使用 isVoiceOverRunning 判断：键盘扩展里该返回值不可靠，
         // VoiceOver 关闭时 post 本身是 no-op，没有副作用。
         guard
