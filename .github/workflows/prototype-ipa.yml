@@ -25,7 +25,7 @@ concurrency:
 jobs:
   build-ipa:
     name: 构建未签名 IPA
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: 检出源码
         uses: actions/checkout@v4

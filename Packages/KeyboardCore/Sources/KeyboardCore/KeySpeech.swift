@@ -174,8 +174,11 @@ public enum KeySpeechComposer {
         table: CharacterDescriptionTable,
         includeKeyName: Bool
     ) -> String? {
-        // 英文模式：只读键名，不读候选（英文直通没有候选语义）。
+        // 英文模式没有候选语义。
+        // 键盘自己发声的通道（includeKeyName = false）此时应该保持安静：
+        // 旁白已经在念这个字母，键盘再念一遍就是双重朗读。
         guard snapshot.inputMode == .chinese else {
+            guard includeKeyName else { return nil }
             return snapshot.keyLabel.isEmpty ? nil : snapshot.keyLabel
         }
 

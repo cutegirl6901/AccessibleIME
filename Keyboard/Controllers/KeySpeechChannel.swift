@@ -161,17 +161,34 @@ class AppVoiceSpeechChannel: NSObject, KeySpeechChannel, AVSpeechSynthesizerDele
         synthesizer.stopSpeaking(at: .immediate)
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Logger.shared.info("KeySpeech didFinish channel=\(id.rawValue)", category: .general)
-        // 被替换掉的旧句不能清掉新句的状态。
-        guard utterance === currentUtterance else { return }
-        currentUtterance = nil
+    // 这两个回调必须声明为 nonisolated：
+    // AVSpeechSynthesizerDelegate 是否带 @MainActor 标注随 SDK 版本而变，
+    // 而 nonisolated 实现可以同时满足「带标注」与「不带标注」两种协议要求，
+    // 因此在任何 SDK 下都能通过 Swift 6 严格并发检查。
+    // 真正的状态处理跳回主线程执行。
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didFinish utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            Logger.shared.info("KeySpeech didFinish channel=\(self.id.rawValue)", category: .general)
+            // 被替换掉的旧句不能清掉新句的状态。
+            guard utterance === self.currentUtterance else { return }
+            self.currentUtterance = nil
+        }
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Logger.shared.info("KeySpeech didCancel channel=\(id.rawValue)", category: .general)
-        if utterance === currentUtterance {
-            currentUtterance = nil
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didCancel utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            Logger.shared.info("KeySpeech didCancel channel=\(self.id.rawValue)", category: .general)
+            if utterance === self.currentUtterance {
+                self.currentUtterance = nil
+            }
         }
     }
 }

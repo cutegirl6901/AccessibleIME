@@ -68,6 +68,23 @@ final class KeySpeechTests: XCTestCase {
         XCTAssertEqual(KeySpeechComposer.compose(s, detail: .standard, table: table), "n，zh")
     }
 
+    func testAppVoiceChannelOmitsKeyName() {
+        // 通道 1/2 由键盘自己发声，必须只读候选，否则会和旁白的键名重叠。
+        let s = snapshot(composition: "n", candidates: ["你"], comments: ["nǐ"])
+        XCTAssertEqual(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false),
+            "你，你们的你"
+        )
+    }
+
+    func testAppVoiceChannelStaysSilentInEnglishMode() {
+        // 英文模式没有候选；键盘不发声，交给旁白念字母。
+        let s = snapshot(keyLabel: "a", inputMode: .english)
+        XCTAssertNil(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false)
+        )
+    }
+
     func testEnglishLetterReadsKeyOnly() {
         let s = snapshot(keyLabel: "a", inputMode: .english, candidates: ["你"])
         XCTAssertEqual(KeySpeechComposer.compose(s, detail: .standard, table: table), "a")
