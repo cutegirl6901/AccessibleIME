@@ -77,6 +77,15 @@ final class KeySpeechTests: XCTestCase {
         )
     }
 
+    func testAppVoiceChannelStaysSilentWithoutCandidates() {
+        // 应用语音通道只读候选。没有候选时读拼音串会与旁白的键名朗读重叠，
+        // 而且拼音不是「候选」，所以要安静。
+        let s = snapshot(composition: "w", candidates: [])
+        XCTAssertNil(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false)
+        )
+    }
+
     func testAppVoiceChannelStaysSilentInEnglishMode() {
         // 英文模式没有候选；键盘不发声，交给旁白念字母。
         let s = snapshot(keyLabel: "a", inputMode: .english)

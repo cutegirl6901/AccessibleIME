@@ -189,9 +189,14 @@ public enum KeySpeechComposer {
             return "\(snapshot.keyLabel)，\(candidate)"
         }
 
-        // 没有候选时退回到当前拼音串，避免「按了没反应」。
+        // 没有候选时的退路。
+        //
+        // 旁白通道（includeKeyName = true）读「键名，拼音」，让用户知道自己打出了什么；
+        // 应用语音通道（false）必须保持安静——拼音串不是候选，
+        // 而且旁白已经在念这个键，再读一遍就是双重朗读。
         if !snapshot.composition.isEmpty {
-            guard includeKeyName, !snapshot.keyLabel.isEmpty else { return snapshot.composition }
+            guard includeKeyName else { return nil }
+            guard !snapshot.keyLabel.isEmpty else { return snapshot.composition }
             return "\(snapshot.keyLabel)，\(snapshot.composition)"
         }
 
