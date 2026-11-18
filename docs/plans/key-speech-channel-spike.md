@@ -111,6 +111,24 @@ job 从未被分配到任何 runner。交接文档也记录过同类问题（原
 
 **因此本轮代码尚未经过编译验证。** 需要账号持有人检查 GitHub Actions 计费/额度后才能继续。
 
+### 证据链（排除代码因素）
+
+| 时间（UTC） | 工作流 | 结果 |
+|---|---|---|
+| 08:03 | Swift 6 Quality / IPA | success |
+| 08:39 | Swift 6 Quality | success |
+| 09:04 | Swift 6 Quality / IPA | success |
+| 10:03 起 | 全部 | failure，`runner_id=0`、`steps=[]`、4–5 秒 |
+
+关键点：**失败的不只是 IPA 构建，连跑在 `ubuntu-latest` 上的 `classify-change`
+也是 `runner_id=0`**。两种操作系统、两种 runner 标签同时失效，
+说明是账号级 Actions 停摆，与本次代码改动无关。
+
+后续动作（需账号持有人）：
+1. 打开 GitHub → Settings → Billing → Actions，检查已用分钟数与支付状态；
+2. 若额度耗尽，等待周期重置或补充额度；
+3. 恢复后重新触发构建，并回填第 6 节真值表。
+
 ## 11. 结论（待填）
 
 - 可用通道：
