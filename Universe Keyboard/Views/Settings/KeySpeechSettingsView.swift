@@ -23,6 +23,14 @@ struct KeySpeechSettingsView: View {
     var body: some View {
         Form {
             Section {
+                Text("打开这一页后，先什么都不用改。回到键盘打一个字母，听有没有声音。")
+                Text("如果完全没有声音，把下面的「候选朗读方式」换成另一个再试一次。")
+                Text("如果声音太慢，也换另一个试试。两种方式哪个好用就用哪个。")
+            } header: {
+                Text("怎么用")
+            }
+
+            Section {
                 Picker("播报详细程度", selection: $detail) {
                     Text("简洁").tag(KeySpeechDetail.concise.rawValue)
                     Text("标准").tag(KeySpeechDetail.standard.rawValue)

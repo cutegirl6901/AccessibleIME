@@ -537,11 +537,12 @@
 				};
 			};
 			buildConfigurationList = 793AC8452FB0BDB000DAE835 /* Build configuration list for PBXProject "Universe Keyboard" */;
-			developmentRegion = en;
+			developmentRegion = "zh-Hans";
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hans",
 			);
 			mainGroup = 793AC8412FB0BDB000DAE835;
 			minimizedProjectReferenceProxies = 1;
@@ -857,18 +858,23 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Universe Keyboard/Universe Keyboard.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "AccessibleIME";
+
+				INFOPLIST_KEY_CFBundleDevelopmentRegion = "zh-Hans";
+				INFOPLIST_KEY_CFBundleLocalizations = (
+					"zh-Hans",
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.14;
+				MARKETING_VERSION = 0.2.15;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -894,18 +900,23 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Universe Keyboard/Universe Keyboard.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "AccessibleIME";
+
+				INFOPLIST_KEY_CFBundleDevelopmentRegion = "zh-Hans";
+				INFOPLIST_KEY_CFBundleLocalizations = (
+					"zh-Hans",
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.14;
+				MARKETING_VERSION = 0.2.15;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -930,12 +941,17 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Keyboard/Keyboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = "";
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Keyboard/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "AccessibleIME Keyboard";
+
+				INFOPLIST_KEY_CFBundleDevelopmentRegion = "zh-Hans";
+				INFOPLIST_KEY_CFBundleLocalizations = (
+					"zh-Hans",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -951,7 +967,7 @@
 				"LIBRIME_LUA_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-lua.xcframework/ios-arm64_x86_64-simulator/librime-lua.a";
 				LIBRIME_OCTAGRAM_FORCE_LOAD = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64/librime-octagram.a";
 				"LIBRIME_OCTAGRAM_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64_x86_64-simulator/librime-octagram.a";
-				MARKETING_VERSION = 0.2.14;
+				MARKETING_VERSION = 0.2.15;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -987,12 +1003,17 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Keyboard/Keyboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				DEVELOPMENT_TEAM = "";
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Keyboard/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "AccessibleIME Keyboard";
+
+				INFOPLIST_KEY_CFBundleDevelopmentRegion = "zh-Hans";
+				INFOPLIST_KEY_CFBundleLocalizations = (
+					"zh-Hans",
+				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1008,7 +1029,7 @@
 				"LIBRIME_LUA_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-lua.xcframework/ios-arm64_x86_64-simulator/librime-lua.a";
 				LIBRIME_OCTAGRAM_FORCE_LOAD = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64/librime-octagram.a";
 				"LIBRIME_OCTAGRAM_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64_x86_64-simulator/librime-octagram.a";
-				MARKETING_VERSION = 0.2.14;
+				MARKETING_VERSION = 0.2.15;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
