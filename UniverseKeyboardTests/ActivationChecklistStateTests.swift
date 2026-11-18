@@ -71,7 +71,8 @@ final class ActivationChecklistStateTests: XCTestCase {
         XCTAssertEqual(state.nextStep, .fullAccess)
         XCTAssertFalse(state.isFullyActivated)
         XCTAssertTrue(state.shouldMarkHelpEntryIncomplete)
-        XCTAssertTrue(state.shouldOfferGuideSession)
+        // 原型不使用完全访问：可以保留未完成标记，但不再每次启动自动弹窗。
+        XCTAssertFalse(state.shouldOfferGuideSession)
     }
 
     func testSharedDataFailureOverridesFullAccessDeferral() {
@@ -188,6 +189,26 @@ final class ActivationChecklistStateTests: XCTestCase {
         XCTAssertTrue(state.shouldOfferGuideSession)
     }
 
+    func testKeyboardAddedWithoutFullAccessDoesNotAutoPresentGuide() {
+        // 原型关闭完全访问（RequestsOpenAccess = false），
+        // 因此「完全访问未确认」不能成为每次启动弹引导的理由。
+        let state = baseState(
+            keyboardAdded: true,
+            fullAccess: .unknown,
+            activeSchemaInstalled: true,
+            rimeDeployed: true,
+            firstInput: true
+        )
+        XCTAssertFalse(state.shouldOfferGuideSession)
+        // 但完全访问仍未满足，标记保持为未完成，用户可在指南里看到。
+        XCTAssertFalse(state.isFullyActivated)
+    }
+
+    func testKeyboardNotYetAddedStillAutoPresentsGuide() {
+        let state = baseState(keyboardAdded: false)
+        XCTAssertTrue(state.shouldOfferGuideSession)
+    }
+
     func testHelpMarkerHiddenWhenFullyActivatedAndHealthy() {
         let state = baseState(
             keyboardAdded: true,
@@ -211,7 +232,8 @@ final class ActivationChecklistStateTests: XCTestCase {
         )
         XCTAssertFalse(state.isFullyActivated)
         XCTAssertTrue(state.shouldMarkHelpEntryIncomplete)
-        XCTAssertTrue(state.shouldOfferGuideSession)
+        // 共享数据不可用是环境事实，不该每次启动弹一次设置引导。
+        XCTAssertFalse(state.shouldOfferGuideSession)
     }
 
     func testHelpMarkerReturnsWhenDeploymentFailed() {
@@ -225,7 +247,8 @@ final class ActivationChecklistStateTests: XCTestCase {
         )
         XCTAssertEqual(state.nextStep, .prepareResources)
         XCTAssertTrue(state.shouldMarkHelpEntryIncomplete)
-        XCTAssertTrue(state.shouldOfferGuideSession)
+        // 部署失败会显示在设置入口上，但不在启动时打断用户。
+        XCTAssertFalse(state.shouldOfferGuideSession)
     }
 
     func testHelpSettingsEntryCopyDoesNotImplyProgressReset() {

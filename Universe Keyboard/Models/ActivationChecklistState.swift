@@ -79,7 +79,20 @@ nonisolated struct ActivationChecklistState: Equatable, Sendable {
     }
 
     /// Auto-present the activation sheet on the next main-App process launch.
-    var shouldOfferGuideSession: Bool { shouldMarkHelpEntryIncomplete }
+    ///
+    /// 原型修订：本原型**明确不使用完全访问**（RequestsOpenAccess = false），
+    /// 而 nextStep 在完全访问未被确认时会一直返回 .fullAccess，
+    /// 导致引导永远无法完成、每次启动都弹。
+    /// 因此只在「键盘还没添加」或「资源/首次输入还没就绪」时主动弹；
+    /// 完全访问不再作为自动弹出的理由，但仍可在指南里手动查看。
+    var shouldOfferGuideSession: Bool {
+        if !keyboardAddedAffirmed { return true }
+        if deploymentFailed || isDeploying { return false }
+        if fullAccess == .sharedDataUnavailable { return false }
+        if !isResourcesReadyForProgress { return true }
+        if !firstInputAffirmed { return true }
+        return false
+    }
 
     /// Full Access step is complete only when not blocked by shared-data failure
     /// and either user-affirmed or positively observed.
