@@ -17,15 +17,16 @@ struct KeySpeechSettingsView: View {
     @AppStorage("key_speech_delivery_mode", store: UserDefaults.standard)
     private var deliveryMode: String = "immediate"
 
-    @AppStorage("key_speech_candidate_mode", store: UserDefaults.standard)
-    private var candidateMode: String = "focusTransfer"
+    // 语音通道（诊断 spike）。默认 4 = 旁白焦点转移，与已发布行为一致。
+    @AppStorage("key_speech_channel", store: UserDefaults.standard)
+    private var channel: Int = 4
 
     var body: some View {
         Form {
             Section {
                 Text("打开这一页后，先什么都不用改。回到键盘打一个字母，听有没有声音。")
-                Text("如果完全没有声音，把下面的「候选朗读方式」换成另一个再试一次。")
-                Text("如果声音太慢，也换另一个试试。两种方式哪个好用就用哪个。")
+                Text("如果完全没有声音，在键盘上三击大小写键，听下一条通道有没有声音。")
+                Text("五条通道都试一遍，哪条能听到就用哪条。")
             } header: {
                 Text("怎么用")
             }
@@ -59,20 +60,24 @@ struct KeySpeechSettingsView: View {
             }
 
             Section {
-                Picker("候选朗读方式", selection: $candidateMode) {
-                    Text("移动焦点（默认）").tag("focusTransfer")
-                    Text("直接公告").tag("announcement")
+                Picker("语音通道", selection: $channel) {
+                    Text("一，应用语音，独立音频会话").tag(1)
+                    Text("二，应用语音，播放类别混音").tag(2)
+                    Text("三，旁白公告，界面刷新之前").tag(3)
+                    Text("四，旁白焦点转移（默认）").tag(4)
+                    Text("五，旁白数值变化").tag(5)
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
             } header: {
-                Text("候选朗读方式")
+                Text("语音通道（诊断）")
             } footer: {
-                Text(candidateModeDescription)
+                Text(channelDescription)
+                Text("也可以在键盘上三击大小写键循环切换，切到时键盘会先读通道名。若听不到通道名，就说明这条通道没声音。")
             }
 
             Section {
-                Text("按键播报不会移动 VoiceOver 焦点，因此连续输入不会被朗读拖慢。想继续打字时，下一次按键的播报会打断上一句。")
+                Text("通道一、二由键盘自己发声，不排旁白的队，也不会移动焦点；新按键会打断上一句。")
                 Text("候选词本身的无障碍标签始终包含逐字解释，无论这里怎么设置；关闭按键播报只影响「按键」反馈。")
             }
         }
@@ -80,7 +85,7 @@ struct KeySpeechSettingsView: View {
         .tint(.primary)
         .onChange(of: detail) { _, _ in defaults.synchronize() }
         .onChange(of: deliveryMode) { _, _ in defaults.synchronize() }
-        .onChange(of: candidateMode) { _, _ in defaults.synchronize() }
+        .onChange(of: channel) { _, _ in defaults.synchronize() }
     }
 
     private var detailDescription: String {
@@ -94,12 +99,19 @@ struct KeySpeechSettingsView: View {
         }
     }
 
-    private var candidateModeDescription: String {
-        switch candidateMode {
-        case "announcement":
-            return "按键后直接发语音公告。更快，但在部分系统版本上可能完全没有声音；遇到这种情况请切回移动焦点。"
+    private var channelDescription: String {
+        // 说明每条通道在测什么，以及预期的失败表现。
+        switch channel {
+        case 1:
+            return "一：键盘自己发声，不使用应用音频会话。若扩展里默认会话被静音，这条会绕开它。"
+        case 2:
+            return "二：键盘自己发声，并把音频会话设为播放混音。用于验证静音开关打开时能否出声。"
+        case 3:
+            return "三：在候选栏刷新之前发旁白公告。0.2.5 曾在此时机听到声音。"
+        case 5:
+            return "五：更新常驻状态元素并发送数值变化通知。旁白对数值变化通常更敏感。"
         default:
-            return "按键后把焦点移到第一个候选并朗读。本项目真机验证过能出声；若感觉慢，可以试试直接公告。"
+            return "四：把旁白焦点移到第一个候选。0.2.11 确认能出声，但每键都要重扫无障碍树，可能较慢。"
         }
     }
 

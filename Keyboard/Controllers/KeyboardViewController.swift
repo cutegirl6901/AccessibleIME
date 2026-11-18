@@ -267,9 +267,14 @@ class KeyboardViewController: UIInputViewController {
     var candidateAnnouncementSequence: UInt64 = 0
     /// 按键即读：序号、投递模式与严格排队状态都封装在这里。
     let keySpeechAnnouncer = KeySpeechAnnouncer()
-    /// 候选朗读方式。默认焦点转移——它是唯一在真机上确认能出声的路径。
-    /// 详见 KeySpeechCandidateMode。
-    var candidateSpeechMode: KeySpeechCandidateMode = .focusTransfer
+    /// 播报通道由 keySpeechAnnouncer.channel 持有（见 KeySpeechChannel.swift）。
+    /// 三击 Shift 切换播报通道用的连击计数与时间戳。
+    var shiftTapChainForChannelSwitch = 0
+    var lastShiftTapForChannelSwitchTime: CFTimeInterval?
+
+    /// 通道 5（数值变化）使用的常驻无障碍状态元素。
+    /// 懒创建：只在真的用到通道 5 时才加进视图层级。
+    var candidateSpeechStatusElementCache: UIView?
     /// 上一次把 VoiceOver 焦点移过去的候选文本，避免同一候选重复抢焦点。
     var lastFocusedCandidateText: String?
     /// 上一次播报过的上屏文本。与候选去重分开，避免上屏写入后

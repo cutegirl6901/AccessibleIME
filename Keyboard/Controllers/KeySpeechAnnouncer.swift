@@ -44,6 +44,21 @@ final class KeySpeechAnnouncer {
         case droppedNoSpeech
     }
 
+    // MARK: - 初始化
+
+    /// 默认使用通道 4（焦点转移），与已发布行为一致。
+    ///
+    /// 不用默认参数调用工厂：默认参数表达式在调用方求值，
+    /// 容易在 Swift 6 的隔离检查下出问题。显式构造更清楚。
+    init(channel: KeySpeechChannel) {
+        self.channel = channel
+    }
+
+    /// 便利初始化：等价于通道 4。
+    convenience init() {
+        self.init(channel: KeySpeechChannelFactory.make(.focusTransfer))
+    }
+
     // MARK: - 状态
 
     /// 单调递增的输入事件序号。每次物理按键 +1。
@@ -60,10 +75,16 @@ final class KeySpeechAnnouncer {
     var deliveryMode: DeliveryMode = .immediate
     var detail: KeySpeechDetail = .standard
 
-    /// 供诊断/单测替换的投递钩子。生产环境走 `UIAccessibility.post`。
-    var postAnnouncement: (String) -> Void = { text in
-        UIAccessibility.post(notification: .announcement, argument: text)
-    }
+    /// 当前播报通道。spike 期间可用三击 Shift 循环切换。
+    ///
+    /// 默认焦点转移（通道 4），即当前已发布行为；只有用户主动切换才改变。
+    /// 通过 `channelDidChange` 让控制器知道是否需要注入回调（通道 4/5）。
+    private(set) var channel: KeySpeechChannel
+    /// 通道切换后回调，供控制器注入 focusFirstCandidate / statusElementProvider。
+    var channelDidChange: ((KeySpeechChannel) -> Void)?
+
+    /// 诊断：所有通道被调用 speak 的累计次数。
+    private(set) var totalSpeakCalls = 0
 
     // MARK: - 序号
 
@@ -126,7 +147,8 @@ final class KeySpeechAnnouncer {
     private func post(_ text: String, sequence: UInt64) {
         lastPostedSequence = sequence
         isSpeaking = deliveryMode == .sequential
-        postAnnouncement(text)
+        totalSpeakCalls += 1
+        channel.speak(text)
         guard deliveryMode == .sequential else { return }
         scheduleTimeout(for: sequence)
     }
@@ -168,10 +190,46 @@ final class KeySpeechAnnouncer {
         post(next.text, sequence: next.sequence)
     }
 
+    // MARK: - 通道切换（诊断 spike）
+
+    /// 切到下一条通道，并朗读这条通道自己的名字。
+    ///
+    /// 朗读名字的通道与切过去的通道是同一个：
+    /// 若在新通道里说不出话，用户听不到名字，就说明这条通道静默。
+    /// 这本身就是最有价值的诊断信号，不要改成用旧通道播报。
+    @discardableResult
+    func cycleChannel() -> KeySpeechChannel {
+        channel.stop()
+        let all = KeySpeechChannelID.allCases
+        let currentIndex = all.firstIndex(of: channel.id) ?? 0
+        let nextID = all[(currentIndex + 1) % all.count]
+        let next = KeySpeechChannelFactory.make(nextID)
+        channel = next
+        channelDidChange?(next)
+        // 先念名字，让用户确认切到了哪一条。
+        totalSpeakCalls += 1
+        next.speak(nextID.spokenName)
+        return next
+    }
+
+    /// 设置页直接选某条通道（不做循环）。
+    func selectChannel(_ id: KeySpeechChannelID, announceName: Bool) {
+        guard channel.id != id else { return }
+        channel.stop()
+        let next = KeySpeechChannelFactory.make(id)
+        channel = next
+        channelDidChange?(next)
+        if announceName {
+            totalSpeakCalls += 1
+            next.speak(id.spokenName)
+        }
+    }
+
     // MARK: - 生命周期
 
     /// 键盘消失/切走时清空队列，避免下次出现时突然念上次的残留内容。
     func reset() {
+        channel.stop()
         timeoutTask?.cancel()
         timeoutTask = nil
         pendingAnnouncement = nil

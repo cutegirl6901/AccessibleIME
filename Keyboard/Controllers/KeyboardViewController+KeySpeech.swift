@@ -47,12 +47,22 @@ extension KeyboardViewController {
             deletedOverride: deletedOverride
         )
 
+        // 只读候选，不读键名（通道 1/2）：VoiceOver 已经在念键名，
+        // 键盘再拼一遍会让两套声音叠在一起听不清。
+        // 旁白通道（3/4/5）保留键名，因为那些通道不会抢占键名朗读。
+        let includeKeyName = !isAppVoiceChannel
         let text = KeySpeechComposer.compose(
             snapshot,
             detail: keySpeechAnnouncer.detail,
-            table: CharacterDescriptionTableProvider.shared.table
+            table: CharacterDescriptionTableProvider.shared.table,
+            includeKeyName: includeKeyName
         )
         keySpeechAnnouncer.announce(text, sequence: sequence)
+    }
+
+    /// 当前通道是否由键盘自己发声（通道 1 / 2）。
+    var isAppVoiceChannel: Bool {
+        keySpeechAnnouncer.channel is AppVoiceSpeechChannel
     }
 
     // MARK: 快照
@@ -162,18 +172,43 @@ extension KeyboardViewController {
         keySpeechAnnouncer.deliveryMode =
             KeySpeechAnnouncer.DeliveryMode(rawValue: modeRaw) ?? .immediate
 
-        // 候选朗读方式。默认焦点转移：这是本项目真机唯一确认能出声的路径。
-        let candidateRaw = value(for: Self.keySpeechCandidateModeKey) as? String ?? ""
-        candidateSpeechMode =
-            KeySpeechCandidateMode(rawValue: candidateRaw) ?? .focusTransfer
+        // 播报通道（诊断 spike）。默认 4（焦点转移），与已发布行为一致。
+        // 存的是通道编号；解析失败一律回到默认值，不要静默切到别的通道。
+        let channelNumber = value(for: Self.keySpeechChannelKey) as? Int
+        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .focusTransfer
+        if keySpeechAnnouncer.channel.id != channelID {
+            keySpeechAnnouncer.selectChannel(channelID, announceName: false)
+            installSpeechChannelCallbacks(keySpeechAnnouncer.channel)
+        }
+    }
+
+    /// 通道 5 用：创建一个常驻、可聚焦、视觉上不可见的状态元素。
+    ///
+    /// 必须真的加进视图层级，否则 VoiceOver 无法把 valueChanged 落到它上面。
+    var candidateSpeechStatusElement: UIView? {
+        if let cached = candidateSpeechStatusElementCache, cached.superview != nil {
+            return cached
+        }
+        guard let host = view else { return nil }
+        let element = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        element.isAccessibilityElement = true
+        element.accessibilityTraits = .staticText
+        element.accessibilityLabel = "候选朗读状态"
+        element.isUserInteractionEnabled = false
+        element.alpha = 0.01
+        host.addSubview(element)
+        candidateSpeechStatusElementCache = element
+        return element
     }
 
     /// 键盘消失/切换 App 时清理，避免下次出现念上次残留。
     func resetKeySpeech() {
         keySpeechAnnouncer.reset()
+        candidateSpeechStatusElementCache?.removeFromSuperview()
+        candidateSpeechStatusElementCache = nil
     }
 
     static let keySpeechDetailKey = "key_speech_detail"
     static let keySpeechDeliveryModeKey = "key_speech_delivery_mode"
-    static let keySpeechCandidateModeKey = "key_speech_candidate_mode"
+    static let keySpeechChannelKey = "key_speech_channel"
 }

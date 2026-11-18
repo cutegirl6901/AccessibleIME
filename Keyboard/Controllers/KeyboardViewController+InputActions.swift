@@ -78,9 +78,10 @@ extension KeyboardViewController {
         // 推进按键序号；播报归属据此判定，过期的直接丢弃。
         let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertKey(key))
-        // 重要时机约束（0.2.5 真机结论）：公告必须在候选栏重建之前发出。
-        // 与 reloadData 同帧的公告会被系统丢弃，因此在 syncUI 之前投递。
-        if candidateSpeechMode == .announcement {
+        // 通道 3 必须在候选栏刷新之前投递（0.2.5 记录的有效时机）。
+        // 其余通道一律在 syncUI 之后。
+        let channelTiming = keySpeechAnnouncer.channel.timing
+        if channelTiming == .beforeUISync {
             speakInsertKey(key, sequence: speechSequence)
         }
 
@@ -140,14 +141,9 @@ extension KeyboardViewController {
 
         let uiStartTime = CACurrentMediaTime()
         syncUI(with: effects)
-        // 候选栏已刷新完成。
-        if candidateSpeechMode == .focusTransfer {
-            // 焦点转移：候选格带有完整 accessibilityLabel，移过去必然朗读。
-            focusFirstCandidateAfterKeypress()
-            // 英文/数字/标点没有候选可转移焦点，补一条键名播报。
-            if controller.state.inputMode != .chinese {
-                speakInsertKey(key, sequence: speechSequence)
-            }
+        // 其余通道在候选栏刷新完成后投递。
+        if channelTiming == .afterUISync {
+            speakInsertKey(key, sequence: speechSequence)
         }
         let endTime = CACurrentMediaTime()
         let uiMs = (endTime - uiStartTime) * 1000

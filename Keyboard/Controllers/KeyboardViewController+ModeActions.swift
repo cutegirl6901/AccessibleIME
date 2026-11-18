@@ -5,11 +5,68 @@ extension KeyboardViewController {
     @objc func toggleShift(_ sender: UIButton) {
         guard !isKeyboardHeightAdjusting else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
+
+        // 诊断 spike：三击 Shift 循环切换播报通道（1–5）。
+        // 检测必须在 controller.handle 之前完成，因为切换时要撤销这次大小写变更。
+        if registerShiftTapForChannelSwitch() {
+            // 这一次点击只用于切换通道，不改大小写状态。
+            let reset = controller.resetShiftState()
+            syncUI(with: reset)
+            cycleSpeechChannel()
+            return
+        }
+
         let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.toggleShift)
         syncUI(with: effects)
         speakStateChange(.shift, sequence: speechSequence)
     }
+
+    /// 记录一次大小写键点击，判断是否构成三击。
+    ///
+    /// - Returns: true 表示这是三击中的第三下，调用方应切换通道并跳过大小写变更。
+    private func registerShiftTapForChannelSwitch() -> Bool {
+        let now = CACurrentMediaTime()
+        if let last = lastShiftTapForChannelSwitchTime,
+            now - last <= Self.shiftChannelSwitchWindow
+        {
+            shiftTapChainForChannelSwitch += 1
+        } else {
+            shiftTapChainForChannelSwitch = 1
+        }
+        lastShiftTapForChannelSwitchTime = now
+
+        guard shiftTapChainForChannelSwitch >= 3 else { return false }
+        // 计数归零，避免第四下又被当成新的一次三击。
+        shiftTapChainForChannelSwitch = 0
+        lastShiftTapForChannelSwitchTime = nil
+        return true
+    }
+
+    /// 切到下一条通道。通道会朗读自己的名字（听不到名字即为该通道静默）。
+    func cycleSpeechChannel() {
+        let next = keySpeechAnnouncer.cycleChannel()
+        installSpeechChannelCallbacks(next)
+        // 记住选择，键盘下次出现时仍是这条通道，便于反复对比。
+        UserDefaults.standard.set(next.id.rawValue, forKey: Self.keySpeechChannelKey)
+    }
+
+    /// 通道 4 / 5 需要控制器提供候选格与状态元素。
+    func installSpeechChannelCallbacks(_ channel: KeySpeechChannel) {
+        if let focus = channel as? FocusTransferSpeechChannel {
+            focus.focusFirstCandidate = { [weak self] in
+                self?.focusFirstCandidateAfterKeypress()
+            }
+        }
+        if let valueChanged = channel as? ValueChangedSpeechChannel {
+            valueChanged.statusElementProvider = { [weak self] in
+                self?.candidateSpeechStatusElement
+            }
+        }
+    }
+
+    /// 三击判定窗口。比双击大写（0.35 秒）宽，因为三击更慢。
+    static let shiftChannelSwitchWindow: CFTimeInterval = 0.6
 
     @objc func toggleKeyboardPage(_ sender: UIButton) {
         guard !isKeyboardHeightAdjusting else { return }

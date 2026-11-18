@@ -858,7 +858,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Universe Keyboard/Universe Keyboard.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
@@ -870,7 +870,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.16;
+				MARKETING_VERSION = 0.2.17;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -896,7 +896,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = "Universe Keyboard/Universe Keyboard.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
@@ -908,7 +908,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.16;
+				MARKETING_VERSION = 0.2.17;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -933,7 +933,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Keyboard/Keyboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				DEVELOPMENT_TEAM = "";
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -955,7 +955,7 @@
 				"LIBRIME_LUA_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-lua.xcframework/ios-arm64_x86_64-simulator/librime-lua.a";
 				LIBRIME_OCTAGRAM_FORCE_LOAD = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64/librime-octagram.a";
 				"LIBRIME_OCTAGRAM_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64_x86_64-simulator/librime-octagram.a";
-				MARKETING_VERSION = 0.2.16;
+				MARKETING_VERSION = 0.2.17;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",
@@ -991,7 +991,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Keyboard/Keyboard.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				DEVELOPMENT_TEAM = "";
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1013,7 +1013,7 @@
 				"LIBRIME_LUA_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-lua.xcframework/ios-arm64_x86_64-simulator/librime-lua.a";
 				LIBRIME_OCTAGRAM_FORCE_LOAD = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64/librime-octagram.a";
 				"LIBRIME_OCTAGRAM_FORCE_LOAD[sdk=iphonesimulator*]" = "$(PROJECT_DIR)/Packages/RimeBridge/Vendor/librime-octagram.xcframework/ios-arm64_x86_64-simulator/librime-octagram.a";
-				MARKETING_VERSION = 0.2.16;
+				MARKETING_VERSION = 0.2.17;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lc++",

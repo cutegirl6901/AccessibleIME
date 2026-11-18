@@ -19,18 +19,6 @@ public enum KeySpeechDetail: Int, CaseIterable, Sendable {
 
 // MARK: - 按键类别
 
-/// 候选朗读的实现方式。
-///
-/// 两者都经过真机验证，但表现不同，因此保留为可切换项：
-/// - `focusTransfer`：把 VoiceOver 焦点移到候选格（0.2.11 验证能听到，
-///   但每键都重扫无障碍树，可能明显变慢）。**默认**。
-/// - `announcement`：直接发公告（0.2.5 在 UI 重建之前调用时验证能听到）。
-///   更快，但时序敏感：必须避开候选栏重建的那一帧。
-public enum KeySpeechCandidateMode: String, CaseIterable, Sendable {
-    case focusTransfer
-    case announcement
-}
-
 /// 按键在朗读语义上的类别。决定播报用的是键名还是更新后的输入状态。
 public enum KeySpeechKind: Equatable, Sendable {
     /// 字母键：中文模式下播报「键名，当前首候选」。
@@ -120,10 +108,14 @@ public struct KeySpeechSnapshot {
 public enum KeySpeechComposer {
 
     /// 生成播报文本；返回 nil 表示这次按键不需要额外播报。
+    /// - Parameter includeKeyName: 是否把键名拼在候选前。
+    ///   VoiceOver 自己会念键名；键盘若同时发声，两套声音叠在一起听不清。
+    ///   因此通道 1/2（应用语音）传 false，只读候选。
     public static func compose(
         _ snapshot: KeySpeechSnapshot,
         detail: KeySpeechDetail,
-        table: CharacterDescriptionTable
+        table: CharacterDescriptionTable,
+        includeKeyName: Bool = true
     ) -> String? {
         switch snapshot.kind {
         case .delete:
@@ -156,7 +148,9 @@ public enum KeySpeechComposer {
             return pageName(snapshot.page)
 
         case .letter:
-            return letterSpeech(snapshot, detail: detail, table: table)
+            return letterSpeech(
+                snapshot, detail: detail, table: table, includeKeyName: includeKeyName)
+            )
 
         case .digit:
             // 数字直接读；VoiceOver 对单个数字的读法已经足够清晰。
@@ -177,7 +171,8 @@ public enum KeySpeechComposer {
     private static func letterSpeech(
         _ snapshot: KeySpeechSnapshot,
         detail: KeySpeechDetail,
-        table: CharacterDescriptionTable
+        table: CharacterDescriptionTable,
+        includeKeyName: Bool
     ) -> String? {
         // 英文模式：只读键名，不读候选（英文直通没有候选语义）。
         guard snapshot.inputMode == .chinese else {
@@ -187,13 +182,13 @@ public enum KeySpeechComposer {
         if let top = snapshot.candidates.first, !top.isEmpty {
             let comment = snapshot.candidateComments.first ?? nil
             let candidate = referentSpeech(top, comment: comment, detail: detail, table: table)
-            guard !snapshot.keyLabel.isEmpty else { return candidate }
+            guard includeKeyName, !snapshot.keyLabel.isEmpty else { return candidate }
             return "\(snapshot.keyLabel)，\(candidate)"
         }
 
         // 没有候选时退回到当前拼音串，避免「按了没反应」。
         if !snapshot.composition.isEmpty {
-            guard !snapshot.keyLabel.isEmpty else { return snapshot.composition }
+            guard includeKeyName, !snapshot.keyLabel.isEmpty else { return snapshot.composition }
             return "\(snapshot.keyLabel)，\(snapshot.composition)"
         }
 

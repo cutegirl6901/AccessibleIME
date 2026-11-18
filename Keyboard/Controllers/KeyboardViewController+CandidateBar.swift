@@ -231,8 +231,8 @@ extension KeyboardViewController {
         // 候选面板展开时，焦点属于面板，不抢占。
         guard !isCandidateExpanded else { return }
         guard !shouldBlockT9RecoveryPresentation else { return }
-        guard first.text != lastFocusedCandidateText else { return }
-
+        // 不去重：候选字相同也必须再读一次。
+        // 盲人用户无法区分「没读到」和「没按上」，静默比重复更有害。
         lastFocusedCandidateText = first.text
         candidateAnnouncementSequence &+= 1
         let sequence = candidateAnnouncementSequence
