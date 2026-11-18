@@ -161,6 +161,11 @@ extension KeyboardViewController {
         let modeRaw = value(for: Self.keySpeechDeliveryModeKey) as? String ?? ""
         keySpeechAnnouncer.deliveryMode =
             KeySpeechAnnouncer.DeliveryMode(rawValue: modeRaw) ?? .immediate
+
+        // 候选朗读方式。默认焦点转移：这是本项目真机唯一确认能出声的路径。
+        let candidateRaw = value(for: Self.keySpeechCandidateModeKey) as? String ?? ""
+        candidateSpeechMode =
+            KeySpeechCandidateMode(rawValue: candidateRaw) ?? .focusTransfer
     }
 
     /// 键盘消失/切换 App 时清理，避免下次出现念上次残留。
@@ -170,4 +175,5 @@ extension KeyboardViewController {
 
     static let keySpeechDetailKey = "key_speech_detail"
     static let keySpeechDeliveryModeKey = "key_speech_delivery_mode"
+    static let keySpeechCandidateModeKey = "key_speech_candidate_mode"
 }

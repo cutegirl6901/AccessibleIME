@@ -175,7 +175,14 @@ extension KeyboardViewController {
         #endif
 
         let currentOffset = candidateScrollView.contentOffset.x
-        collectionView.reloadData()
+        // 关键：优先就地更新已有 cell，而不是 reloadData()。
+        // reloadData 会销毁并重建 cell，VoiceOver 必须重扫整棵无障碍树，
+        // 焦点转移因此要等好几秒（0.2.11 的真机问题）。
+        // 就地更新保留 cell 对象与其无障碍元素身份，焦点转移可立即生效。
+        // 只有候选数量变化（必须插入/删除 cell）时才退回 reloadData。
+        if !reloadCandidateCellsInPlace(items, collectionView: collectionView) {
+            collectionView.reloadData()
+        }
         if keepScrollPosition {
             collectionView.layoutIfNeeded()
             let maxOffset = max(0, candidateScrollView.contentSize.width - candidateScrollView.bounds.width)
@@ -193,6 +200,55 @@ extension KeyboardViewController {
             )
         #endif
 
+    }
+
+    /// 按键后把 VoiceOver 焦点移到候选栏第一格，从而朗读该格的
+    /// accessibilityLabel（词 + 读法 + 逐字解释）。
+    ///
+    /// 为什么必须是焦点转移，而不是 announcement：
+    /// 本项目真机反复验证过——键盘扩展里 UIAccessibility.post(.announcement)
+    /// **听不到**（0.2.2–0.2.10 全部失败），而焦点转移**能听到**（0.2.11 成功）。
+    /// 这是唯一有真机成功记录的路径，不要再用 announcement 替代它。
+    ///
+    /// 为什么以前慢：候选栏每次都 reloadData()，cell 被销毁重建，
+    /// VoiceOver 必须重扫整棵无障碍树才能定位新 cell，于是要等好几秒。
+    /// 现在候选内容改为就地更新（reconfigure），cell 对象保持存活，
+    /// 焦点转移可以立刻生效。
+    ///
+    /// 去重与序号：同一候选不重复转移；序号保证快速输入时旧请求作废。
+    func focusFirstCandidateAfterKeypress() {
+        guard controller.state.inputMode == .chinese else {
+            lastFocusedCandidateText = nil
+            return
+        }
+        guard let output = controller.state.lastRimeOutput,
+            let first = output.candidates.first,
+            !first.text.isEmpty
+        else {
+            lastFocusedCandidateText = nil
+            return
+        }
+        // 候选面板展开时，焦点属于面板，不抢占。
+        guard !isCandidateExpanded else { return }
+        guard !shouldBlockT9RecoveryPresentation else { return }
+        guard first.text != lastFocusedCandidateText else { return }
+
+        lastFocusedCandidateText = first.text
+        candidateAnnouncementSequence &+= 1
+        let sequence = candidateAnnouncementSequence
+
+        // 候选栏已在本次 syncUI 内就地更新完毕，这里只等一个主线程循环，
+        // 让 UIKit 提交本帧布局，然后立刻转移焦点。
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.candidateAnnouncementSequence == sequence else { return }
+            guard !self.isCandidateExpanded else { return }
+            guard let collectionView = self.candidateCollectionView else { return }
+            guard collectionView.numberOfItems(inSection: 0) > 0 else { return }
+            let indexPath = IndexPath(item: 0, section: 0)
+            guard let cell = collectionView.cellForItem(at: indexPath) else { return }
+            UIAccessibility.post(notification: .layoutChanged, argument: cell)
+        }
     }
 
     /// 文字真正进入输入框后，用 VoiceOver 播报「词 + 逐字解释」。

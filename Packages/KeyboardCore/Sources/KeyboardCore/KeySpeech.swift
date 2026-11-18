@@ -19,6 +19,18 @@ public enum KeySpeechDetail: Int, CaseIterable, Sendable {
 
 // MARK: - 按键类别
 
+/// 候选朗读的实现方式。
+///
+/// 两者都经过真机验证，但表现不同，因此保留为可切换项：
+/// - `focusTransfer`：把 VoiceOver 焦点移到候选格（0.2.11 验证能听到，
+///   但每键都重扫无障碍树，可能明显变慢）。**默认**。
+/// - `announcement`：直接发公告（0.2.5 在 UI 重建之前调用时验证能听到）。
+///   更快，但时序敏感：必须避开候选栏重建的那一帧。
+public enum KeySpeechCandidateMode: String, CaseIterable, Sendable {
+    case focusTransfer
+    case announcement
+}
+
 /// 按键在朗读语义上的类别。决定播报用的是键名还是更新后的输入状态。
 public enum KeySpeechKind: Equatable, Sendable {
     /// 字母键：中文模式下播报「键名，当前首候选」。

@@ -17,6 +17,9 @@ struct KeySpeechSettingsView: View {
     @AppStorage("key_speech_delivery_mode", store: UserDefaults.standard)
     private var deliveryMode: String = "immediate"
 
+    @AppStorage("key_speech_candidate_mode", store: UserDefaults.standard)
+    private var candidateMode: String = "focusTransfer"
+
     var body: some View {
         Form {
             Section {
@@ -48,6 +51,19 @@ struct KeySpeechSettingsView: View {
             }
 
             Section {
+                Picker("候选朗读方式", selection: $candidateMode) {
+                    Text("移动焦点（默认）").tag("focusTransfer")
+                    Text("直接公告").tag("announcement")
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } header: {
+                Text("候选朗读方式")
+            } footer: {
+                Text(candidateModeDescription)
+            }
+
+            Section {
                 Text("按键播报不会移动 VoiceOver 焦点，因此连续输入不会被朗读拖慢。想继续打字时，下一次按键的播报会打断上一句。")
                 Text("候选词本身的无障碍标签始终包含逐字解释，无论这里怎么设置；关闭按键播报只影响「按键」反馈。")
             }
@@ -56,6 +72,7 @@ struct KeySpeechSettingsView: View {
         .tint(.primary)
         .onChange(of: detail) { _, _ in defaults.synchronize() }
         .onChange(of: deliveryMode) { _, _ in defaults.synchronize() }
+        .onChange(of: candidateMode) { _, _ in defaults.synchronize() }
     }
 
     private var detailDescription: String {
@@ -66,6 +83,15 @@ struct KeySpeechSettingsView: View {
             return "候选词加逐字解释，例如「你，你们的你」。"
         case .detailed:
             return "再加 RIME 提供的读音，例如「你，nǐ，你们的你」。"
+        }
+    }
+
+    private var candidateModeDescription: String {
+        switch candidateMode {
+        case "announcement":
+            return "按键后直接发语音公告。更快，但在部分系统版本上可能完全没有声音；遇到这种情况请切回移动焦点。"
+        default:
+            return "按键后把焦点移到第一个候选并朗读。本项目真机验证过能出声；若感觉慢，可以试试直接公告。"
         }
     }
 

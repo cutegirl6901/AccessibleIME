@@ -292,4 +292,46 @@ extension KeyboardViewController: UICollectionViewDataSource, UICollectionViewDe
         let summary = correction.edits.map { "\($0.original)→\($0.replacement)" }.joined(separator: " ")
         return summary.isEmpty ? nil : summary
     }
+
+    // MARK: - 就地更新候选栏
+
+    /// 更新候选栏内容，但**尽量不销毁 cell**。
+    ///
+    /// 为什么需要它：`reloadData()` 会重建所有 cell，VoiceOver 的无障碍树随之
+    /// 失效，必须重扫才能把焦点放到候选上——实测要等好几秒。
+    /// 就地重新配置已有 cell 可以保留它们的无障碍元素身份，
+    /// 使 `UIAccessibility.post(.layoutChanged)` 立刻生效。
+    ///
+    /// - Returns: `true` 表示已就地更新完成；`false` 表示调用方应退回 `reloadData()`
+    ///   （候选数量变化时必须插入或删除 cell）。
+    func reloadCandidateCellsInPlace(_ items: [CandidateItem], collectionView: UICollectionView) -> Bool {
+        guard collectionView === candidateCollectionView else { return false }
+        // 数量变化时必须走 reloadData：cell 的增删无法靠重配置表达。
+        guard collectionView.numberOfItems(inSection: 0) == items.count else { return false }
+        guard !items.isEmpty else { return false }
+
+        var reconfigured = 0
+        for indexPath in collectionView.indexPathsForVisibleItems {
+            guard items.indices.contains(indexPath.item),
+                let cell = collectionView.cellForItem(at: indexPath) as? CandidateCollectionCell
+            else { continue }
+            let item = items[indexPath.item]
+            cell.configure(
+                with: item,
+                preferred: isPreferredCandidate(item, at: indexPath.item),
+                expanded: false,
+                fontSnapshot: candidateFontSnapshot
+            )
+            reconfigured += 1
+        }
+
+        guard reconfigured > 0 else { return false }
+        // 候选文字变化会改变 cell 宽度，需要让流式布局重新测量尺寸；
+        // 这里只失效布局，不重建 cell。
+        UIView.performWithoutAnimation {
+            collectionView.collectionViewLayout.invalidateLayout()
+            collectionView.layoutIfNeeded()
+        }
+        return true
+    }
 }
