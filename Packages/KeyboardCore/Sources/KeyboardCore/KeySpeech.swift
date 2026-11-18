@@ -195,6 +195,10 @@ public enum KeySpeechComposer {
             return "\(snapshot.keyLabel)，\(snapshot.composition)"
         }
 
+        // 走到这里说明既没有候选也没有拼音。
+        // 键盘自己发声时保持安静：这种情况没有「候选」可读，
+        // 读键名又会和旁白重复。
+        guard includeKeyName else { return nil }
         return snapshot.keyLabel.isEmpty ? nil : snapshot.keyLabel
     }
 

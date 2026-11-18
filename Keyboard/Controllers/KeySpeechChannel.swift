@@ -166,15 +166,21 @@ class AppVoiceSpeechChannel: NSObject, KeySpeechChannel, AVSpeechSynthesizerDele
     // 而 nonisolated 实现可以同时满足「带标注」与「不带标注」两种协议要求，
     // 因此在任何 SDK 下都能通过 Swift 6 严格并发检查。
     // 真正的状态处理跳回主线程执行。
+    // AVSpeechUtterance 不是 Sendable，不能跨 actor 传递。
+    // 因此在 nonisolated 回调里先用 ObjectIdentifier 记住身份，
+    // 只把「是不是当前这一句」这个 Bool 带进主线程。
     nonisolated func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer,
         didFinish utterance: AVSpeechUtterance
     ) {
+        let finished = ObjectIdentifier(utterance)
         Task { @MainActor [weak self] in
             guard let self else { return }
             Logger.shared.info("KeySpeech didFinish channel=\(self.id.rawValue)", category: .general)
             // 被替换掉的旧句不能清掉新句的状态。
-            guard utterance === self.currentUtterance else { return }
+            guard let current = self.currentUtterance,
+                ObjectIdentifier(current) == finished
+            else { return }
             self.currentUtterance = nil
         }
     }
@@ -183,12 +189,14 @@ class AppVoiceSpeechChannel: NSObject, KeySpeechChannel, AVSpeechSynthesizerDele
         _ synthesizer: AVSpeechSynthesizer,
         didCancel utterance: AVSpeechUtterance
     ) {
+        let cancelled = ObjectIdentifier(utterance)
         Task { @MainActor [weak self] in
             guard let self else { return }
             Logger.shared.info("KeySpeech didCancel channel=\(self.id.rawValue)", category: .general)
-            if utterance === self.currentUtterance {
-                self.currentUtterance = nil
-            }
+            guard let current = self.currentUtterance,
+                ObjectIdentifier(current) == cancelled
+            else { return }
+            self.currentUtterance = nil
         }
     }
 }
@@ -306,7 +314,7 @@ final class ValueChangedSpeechChannel: KeySpeechChannel {
 @MainActor
 enum KeySpeechChannelFactory {
     /// 按编号创建通道。注意：通道 4 / 5 需要控制器注入回调后才完全可用。
-    static func make(_ id: KeySpeechChannelID) -> KeySpeechChannel {
+    static func make(_ id: KeySpeechChannelID) -> any KeySpeechChannel {
         switch id {
         case .appVoiceIsolated:
             return AppVoiceSpeechChannel(id: .appVoiceIsolated, usesApplicationAudioSession: false)

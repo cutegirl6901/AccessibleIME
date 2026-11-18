@@ -50,7 +50,7 @@ final class KeySpeechAnnouncer {
     ///
     /// 不用默认参数调用工厂：默认参数表达式在调用方求值，
     /// 容易在 Swift 6 的隔离检查下出问题。显式构造更清楚。
-    init(channel: KeySpeechChannel) {
+    init(channel: any KeySpeechChannel) {
         self.channel = channel
     }
 
@@ -79,9 +79,9 @@ final class KeySpeechAnnouncer {
     ///
     /// 默认焦点转移（通道 4），即当前已发布行为；只有用户主动切换才改变。
     /// 通过 `channelDidChange` 让控制器知道是否需要注入回调（通道 4/5）。
-    private(set) var channel: KeySpeechChannel
+    private(set) var channel: any KeySpeechChannel
     /// 通道切换后回调，供控制器注入 focusFirstCandidate / statusElementProvider。
-    var channelDidChange: ((KeySpeechChannel) -> Void)?
+    var channelDidChange: ((any KeySpeechChannel) -> Void)?
 
     /// 诊断：所有通道被调用 speak 的累计次数。
     private(set) var totalSpeakCalls = 0
@@ -198,7 +198,7 @@ final class KeySpeechAnnouncer {
     /// 若在新通道里说不出话，用户听不到名字，就说明这条通道静默。
     /// 这本身就是最有价值的诊断信号，不要改成用旧通道播报。
     @discardableResult
-    func cycleChannel() -> KeySpeechChannel {
+    func cycleChannel() -> any KeySpeechChannel {
         channel.stop()
         let all = KeySpeechChannelID.allCases
         let currentIndex = all.firstIndex(of: channel.id) ?? 0

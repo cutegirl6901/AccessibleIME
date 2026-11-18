@@ -52,7 +52,7 @@ extension KeyboardViewController {
     }
 
     /// 通道 4 / 5 需要控制器提供候选格与状态元素。
-    func installSpeechChannelCallbacks(_ channel: KeySpeechChannel) {
+    func installSpeechChannelCallbacks(_ channel: any KeySpeechChannel) {
         if let focus = channel as? FocusTransferSpeechChannel {
             focus.focusFirstCandidate = { [weak self] in
                 self?.focusFirstCandidateAfterKeypress()
