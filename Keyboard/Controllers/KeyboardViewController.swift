@@ -272,9 +272,6 @@ class KeyboardViewController: UIInputViewController {
     var shiftTapChainForChannelSwitch = 0
     var lastShiftTapForChannelSwitchTime: CFTimeInterval?
 
-    /// 通道 5（数值变化）使用的常驻无障碍状态元素。
-    /// 懒创建：只在真的用到通道 5 时才加进视图层级。
-    var candidateSpeechStatusElementCache: UIView?
     /// 上一次把 VoiceOver 焦点移过去的候选文本，避免同一候选重复抢焦点。
     var lastFocusedCandidateText: String?
     /// 上一次播报过的上屏文本。与候选去重分开，避免上屏写入后

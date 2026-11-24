@@ -51,19 +51,14 @@ extension KeyboardViewController {
         UserDefaults.standard.set(next.id.rawValue, forKey: Self.keySpeechChannelKey)
     }
 
-    /// 通道 4 / 5 需要控制器提供候选格与状态元素。
+    /// 通道 4 需要控制器提供候选格。
     ///
     /// 必须在**每次**换通道后调用，不能只在「通道号与默认值不同」时才调用：
-    /// 漏注入会让整条通道静默，而这只是两次可选绑定赋值。
+    /// 漏注入会让整条通道静默，而这只是一次可选绑定赋值。
     func installSpeechChannelCallbacks(_ channel: any KeySpeechChannel) {
         if let focus = channel as? FocusTransferSpeechChannel {
             focus.focusFirstCandidate = { [weak self] in
                 self?.focusFirstCandidateAfterKeypress()
-            }
-        }
-        if let valueChanged = channel as? ValueChangedSpeechChannel {
-            valueChanged.statusElementProvider = { [weak self] in
-                self?.candidateSpeechStatusElement
             }
         }
     }

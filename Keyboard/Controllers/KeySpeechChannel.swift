@@ -32,8 +32,11 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
     case appVoicePlayback = 2
     case queuedAnnouncement = 3
     case focusTransfer = 4
-    case valueChanged = 5
     case interruptingAnnouncement = 6
+    // 编号 5 保留空缺，不复用：0.2.17 曾把它分配给一个依赖
+    // `UIAccessibility.Notification.valueChanged` 的通道，而该通知
+    // 在 UIKit 中并不存在，那段代码从未编译过，已整体删除。
+    // 不复用编号，避免旧版本存下的「5」被解读成另一条通道。
 
     /// 切到该通道时朗读的名字。用完整句子，避免只听到一个编号。
     var spokenName: String {
@@ -42,7 +45,6 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
         case .appVoicePlayback: return "通道二，应用语音，播放类别混音"
         case .queuedAnnouncement: return "通道三，旁白公告，排队朗读"
         case .focusTransfer: return "通道四，旁白焦点转移"
-        case .valueChanged: return "通道五，旁白数值变化"
         case .interruptingAnnouncement: return "通道六，旁白公告，打断式"
         }
     }
@@ -53,7 +55,6 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
         case .appVoicePlayback: return "应用语音（播放混音）"
         case .queuedAnnouncement: return "旁白公告（排队）"
         case .focusTransfer: return "旁白焦点转移"
-        case .valueChanged: return "旁白数值变化"
         case .interruptingAnnouncement: return "旁白公告（打断）"
         }
     }
@@ -69,8 +70,6 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
             return "在候选栏刷新之前发旁白公告，并标记为低优先级排队。旁白会先念键名，再念候选。"
         case .focusTransfer:
             return "把旁白焦点移到第一个候选。0.2.11 确认能出声，但每键都要重扫无障碍树。"
-        case .valueChanged:
-            return "更新一个常驻候选状态元素并发送数值变化通知。旁白对数值变化通常更敏感。"
         case .interruptingAnnouncement:
             return "同样每键一条旁白公告，但用默认优先级：会打断上一句，快速连打时永远听最新一条。"
         }
@@ -128,7 +127,14 @@ class AppVoiceSpeechChannel: NSObject, KeySpeechChannel, AVSpeechSynthesizerDele
 
     /// 诊断：记录是否真的调用过 speak，便于日志判断走到哪一步。
     private(set) var speakCallCount = 0
+    /// 诊断：最近一次会话配置失败的原因（只读；子类用 `recordError` 写）。
     private(set) var lastErrorDescription: String?
+
+    /// 供子类记录会话配置失败。Swift 没有 `protected`，
+    /// 因此用私有 setter + 显式写入方法来表达同一个意图。
+    func recordError(_ description: String) {
+        lastErrorDescription = description
+    }
 
     init(id: KeySpeechChannelID, usesApplicationAudioSession: Bool) {
         self.id = id
@@ -246,7 +252,7 @@ final class PlaybackSessionSpeechChannel: AppVoiceSpeechChannel {
             try session.setActive(true)
         } catch {
             // 失败不致命：合成器仍会尝试用自己的路径。
-            lastErrorDescription = error.localizedDescription
+            recordError(error.localizedDescription)
         }
     }
 }
@@ -344,40 +350,11 @@ final class FocusTransferSpeechChannel: KeySpeechChannel {
     }
 }
 
-/// 通道 5：更新一个常驻元素并发送数值变化通知。
-///
-/// VoiceOver 对数值变化通常比公告更敏感，且不需要等待 UI 重建时机。
-@MainActor
-final class ValueChangedSpeechChannel: KeySpeechChannel {
-    let id: KeySpeechChannelID = .valueChanged
-    var timing: KeySpeechDeliveryTiming { .afterUISync }
-
-    private(set) var speakCallCount = 0
-    private weak var statusView: UIView?
-
-    /// 由控制器注入一个常驻、可聚焦的无障碍状态元素。
-    var statusElementProvider: (() -> UIView?)?
-
-    func speak(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        speakCallCount += 1
-
-        guard let view = statusElementProvider?() ?? statusView else { return }
-        statusView = view
-        view.accessibilityLabel = trimmed
-        view.accessibilityValue = trimmed
-        UIAccessibility.post(notification: .valueChanged, argument: view)
-    }
-
-    func stop() {}
-}
-
 // MARK: - 工厂
 
 @MainActor
 enum KeySpeechChannelFactory {
-    /// 按编号创建通道。注意：通道 4 / 5 需要控制器注入回调后才完全可用。
+    /// 按编号创建通道。注意：通道 4 需要控制器注入回调后才完全可用。
     static func make(_ id: KeySpeechChannelID) -> any KeySpeechChannel {
         switch id {
         case .appVoiceIsolated:
@@ -388,8 +365,6 @@ enum KeySpeechChannelFactory {
             return AnnouncementSpeechChannel()
         case .focusTransfer:
             return FocusTransferSpeechChannel()
-        case .valueChanged:
-            return ValueChangedSpeechChannel()
         case .interruptingAnnouncement:
             return InterruptingAnnouncementSpeechChannel()
         }

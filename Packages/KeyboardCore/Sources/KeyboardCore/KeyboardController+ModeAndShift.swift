@@ -138,7 +138,12 @@ extension KeyboardController {
         return .shiftStateChanged
     }
 
-    func resetShiftState() -> KeyboardEffect {
+    /// 把大小写状态复位为关闭。
+    ///
+    /// 声明为 `public`：键盘扩展在「三击大小写键切换播报通道」时要撤销
+    /// 这一次点击带来的状态变化，那属于 UI 层的动作，不能只靠同模块可见性。
+    @discardableResult
+    public func resetShiftState() -> KeyboardEffect {
         let wasActive = state.shiftState != .off
         state.shiftState = .off
         state.lastShiftTapTime = nil

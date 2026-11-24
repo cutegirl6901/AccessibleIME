@@ -68,7 +68,6 @@ struct KeySpeechSettingsView: View {
                     Text("一，应用语音，独立音频会话").tag(1)
                     Text("二，应用语音，播放类别混音").tag(2)
                     Text("四，旁白焦点转移").tag(4)
-                    Text("五，旁白数值变化").tag(5)
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
@@ -112,8 +111,6 @@ struct KeySpeechSettingsView: View {
             return "二：键盘自己发声，并把音频会话设为播放混音。用于验证静音开关打开时能否出声。"
         case 4:
             return "四：把旁白焦点移到第一个候选，靠焦点变化朗读。会抢走按键焦点，连续打字手感与系统键盘不同。"
-        case 5:
-            return "五：更新常驻状态元素并发送数值变化通知。旁白对数值变化通常更敏感。"
         case 6:
             return "六：每键一条旁白公告，但会打断上一句。快速连打时总是读最新一条，代价是键名可能被切掉。"
         default:

@@ -219,32 +219,11 @@ extension KeyboardViewController {
         installSpeechChannelCallbacks(keySpeechAnnouncer.channel)
     }
 
-    /// 通道 5 用：创建一个常驻、可聚焦、视觉上不可见的状态元素。
-    ///
-    /// 必须真的加进视图层级，否则 VoiceOver 无法把 valueChanged 落到它上面。
-    var candidateSpeechStatusElement: UIView? {
-        if let cached = candidateSpeechStatusElementCache, cached.superview != nil {
-            return cached
-        }
-        guard let host = view else { return nil }
-        let element = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
-        element.isAccessibilityElement = true
-        element.accessibilityTraits = .staticText
-        element.accessibilityLabel = "候选朗读状态"
-        element.isUserInteractionEnabled = false
-        element.alpha = 0.01
-        host.addSubview(element)
-        candidateSpeechStatusElementCache = element
-        return element
-    }
-
     /// 键盘消失/切换 App 时清理，避免下次出现念上次残留。
     func resetKeySpeech() {
         keySpeechAnnouncer.reset()
         // 未投递的上屏播报也一并丢弃：键盘已经收起，迟到的朗读只会造成困惑。
         pendingCommittedAnnouncement = nil
-        candidateSpeechStatusElementCache?.removeFromSuperview()
-        candidateSpeechStatusElementCache = nil
     }
 
     static let keySpeechDetailKey = "key_speech_detail"
