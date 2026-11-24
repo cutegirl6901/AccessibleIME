@@ -108,9 +108,11 @@ public struct KeySpeechSnapshot {
 public enum KeySpeechComposer {
 
     /// 生成播报文本；返回 nil 表示这次按键不需要额外播报。
-    /// - Parameter includeKeyName: 是否把键名拼在候选前。
-    ///   VoiceOver 自己会念键名；键盘若同时发声，两套声音叠在一起听不清。
-    ///   因此通道 1/2（应用语音）传 false，只读候选。
+    ///
+    /// - Parameter includeKeyName: 是否由键盘自己再念一遍键名。
+    ///   走旁白公告时传 `false`：旁白在焦点落到按键时已经念过键名，
+    ///   再拼一遍就是双重朗读，听感与系统输入法差别很大。
+    ///   只有键盘自己发声（不经过旁白）的通道才需要 `true`。
     public static func compose(
         _ snapshot: KeySpeechSnapshot,
         detail: KeySpeechDetail,
@@ -124,14 +126,18 @@ public enum KeySpeechComposer {
             return "已删除 \(spoken)"
 
         case .candidate, .space, .returnKey:
-            if let committed = snapshot.committedText, !committed.isEmpty {
+            // 只有空白（例如回车换行）没有可读内容，交给下面的键名兜底。
+            if let committed = snapshot.committedText,
+                !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 return fragment(for: committed, detail: detail, table: table)
             }
-            // 没有上屏文本时的兜底：选词用候选文字，空格/回车读键名。
+            // 没有上屏文本时的兜底。旁白通道下空格/回车保持安静：
+            // 旁白已经念过键名，这里再补一条只是重复。
             switch snapshot.kind {
             case .candidate: return snapshot.keyLabel.isEmpty ? nil : snapshot.keyLabel
-            case .space: return "空格"
-            default: return "回车"
+            case .space: return includeKeyName ? "空格" : nil
+            default: return includeKeyName ? "回车" : nil
             }
 
         case .shift:
@@ -149,20 +155,25 @@ public enum KeySpeechComposer {
 
         case .letter:
             return letterSpeech(
-                snapshot, detail: detail, table: table, includeKeyName: includeKeyName)
+                snapshot,
+                detail: detail,
+                table: table,
+                includeKeyName: includeKeyName
             )
 
-        case .digit:
-            // 数字直接读；VoiceOver 对单个数字的读法已经足够清晰。
-            return snapshot.keyLabel
-
-        case .punctuation:
-            guard let glyph = snapshot.keyLabel.first else { return nil }
-            if let name = table.description(for: glyph) { return name }
-            return snapshot.keyLabel
-
-        case .function:
-            return snapshot.keyLabel
+        case .digit, .punctuation, .function:
+            // 键名交给旁白。键盘只在有「新信息」时才补充一条：
+            // 中文模式下数字/标点同样会参与组字，因此要看当前首候选。
+            if includeKeyName {
+                if snapshot.kind == .punctuation,
+                    let glyph = snapshot.keyLabel.first,
+                    let name = table.description(for: glyph)
+                {
+                    return name
+                }
+                return snapshot.keyLabel
+            }
+            return supplementarySpeech(snapshot, detail: detail, table: table)
         }
     }
 
@@ -175,11 +186,21 @@ public enum KeySpeechComposer {
         includeKeyName: Bool
     ) -> String? {
         // 英文模式没有候选语义。
-        // 键盘自己发声的通道（includeKeyName = false）此时应该保持安静：
+        // 走旁白公告（includeKeyName = false）时保持安静：
         // 旁白已经在念这个字母，键盘再念一遍就是双重朗读。
         guard snapshot.inputMode == .chinese else {
             guard includeKeyName else { return nil }
             return snapshot.keyLabel.isEmpty ? nil : snapshot.keyLabel
+        }
+
+        // 字母键也可能直接上屏（标点自动接纳、T9 组合结束等）。
+        // 这时上屏文本才是新信息，候选列表可能是空的。
+        if let committed = snapshot.committedText,
+            !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            let spoken = fragment(for: committed, detail: detail, table: table)
+            guard includeKeyName, !snapshot.keyLabel.isEmpty else { return spoken }
+            return "\(snapshot.keyLabel)，\(spoken)"
         }
 
         if let top = snapshot.candidates.first, !top.isEmpty {
@@ -191,9 +212,9 @@ public enum KeySpeechComposer {
 
         // 没有候选时的退路。
         //
-        // 旁白通道（includeKeyName = true）读「键名，拼音」，让用户知道自己打出了什么；
-        // 应用语音通道（false）必须保持安静——拼音串不是候选，
-        // 而且旁白已经在念这个键，再读一遍就是双重朗读。
+        // 键盘自己发声（includeKeyName = true）读「键名，拼音」，让用户知道自己打出什么；
+        // 走旁白公告（false）必须保持安静——旁白已经在念这个键，
+        // 再读一遍拼音串就是双重朗读。
         if !snapshot.composition.isEmpty {
             guard includeKeyName else { return nil }
             guard !snapshot.keyLabel.isEmpty else { return snapshot.composition }
@@ -201,10 +222,30 @@ public enum KeySpeechComposer {
         }
 
         // 走到这里说明既没有候选也没有拼音。
-        // 键盘自己发声时保持安静：这种情况没有「候选」可读，
-        // 读键名又会和旁白重复。
+        // 旁白通道保持安静：没有新信息，读键名只会和旁白重复。
         guard includeKeyName else { return nil }
         return snapshot.keyLabel.isEmpty ? nil : snapshot.keyLabel
+    }
+
+    /// 只读「按键带来的新信息」：上屏文本优先，其次首候选。
+    ///
+    /// 用于旁白通道（`includeKeyName = false`）：键名已由旁白读出，
+    /// 键盘只在确实产生了新内容时才补一条，避免重复朗读。
+    private static func supplementarySpeech(
+        _ snapshot: KeySpeechSnapshot,
+        detail: KeySpeechDetail,
+        table: CharacterDescriptionTable
+    ) -> String? {
+        if let committed = snapshot.committedText,
+            !committed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return fragment(for: committed, detail: detail, table: table)
+        }
+        if let top = snapshot.candidates.first, !top.isEmpty {
+            let comment = snapshot.candidateComments.first ?? nil
+            return referentSpeech(top, comment: comment, detail: detail, table: table)
+        }
+        return nil
     }
 
     /// 候选/上屏文本的朗读形式。

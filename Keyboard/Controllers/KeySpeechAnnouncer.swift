@@ -16,19 +16,22 @@ import UIKit
 ///
 /// ## 据此采取的取舍
 ///
-/// - **不做防抖、不合并**：每次按键都生成一条播报，符合「一次按键一次反馈」。
-/// - 系统打断由系统的打断策略决定；但**快速连按时旧公告会被主动作废**，
-///   避免读到过期候选（这是唯一必要的「丢弃」，丢弃的是**过期**内容，
-///   不是用户按下的那一次）。可选严格排队模式见 `DeliveryMode`。
+/// - **一次按键一次播报**（默认）：不合并、不防抖，输入一个字符就发一条。
+///   候选用低优先级排队，旁白念完键名后再念候选，两者不抢话。
+/// - 快速连按时，只有被后续按键取代的**过期内容**会被丢弃；
+///   用户按下的每一次都会尝试发声。
 /// - 检测不可靠时**宁可照发**：漏读比误发更伤盲人用户。
 @MainActor
 final class KeySpeechAnnouncer {
 
     /// 投递模式。
     enum DeliveryMode: String, CaseIterable, Sendable {
-        /// 每次按键立即投递；新按键会作废旧公告。延迟最低。（默认）
+        /// 每次按键立即投递；新按键会作废旧公告。（默认）
+        ///
+        /// 不合并：输入一个字符就播报一次。候选本身用低优先级排队，
+        /// 所以在旁白念键名时不会抢占，队列也不会堆成延迟。
         case immediate
-        /// 在 immediate 基础上，等系统回调确认上一条念完再投下一条。
+        /// 等系统回调确认上一条念完再投下一条。
         ///
         /// 注意：`announcementDidFinish` 在键盘扩展里**是否可靠未经证实**，
         /// 且一旦回调丢失就会卡住。因此带超时兜底。
@@ -46,7 +49,7 @@ final class KeySpeechAnnouncer {
 
     // MARK: - 初始化
 
-    /// 默认使用通道 4（焦点转移），与已发布行为一致。
+    /// 用指定通道构造。
     ///
     /// 不用默认参数调用工厂：默认参数表达式在调用方求值，
     /// 容易在 Swift 6 的隔离检查下出问题。显式构造更清楚。
@@ -54,9 +57,9 @@ final class KeySpeechAnnouncer {
         self.channel = channel
     }
 
-    /// 便利初始化：等价于通道 4。
+    /// 便利初始化：默认排队公告通道（旁白先念键名，候选随后跟上）。
     convenience init() {
-        self.init(channel: KeySpeechChannelFactory.make(.focusTransfer))
+        self.init(channel: KeySpeechChannelFactory.make(.queuedAnnouncement))
     }
 
     // MARK: - 状态
@@ -143,7 +146,7 @@ final class KeySpeechAnnouncer {
         }
     }
 
-    /// 直接投递，不走队列。立即模式下每次都走这里。
+    /// 直接投递。立即模式每次都走这里：一次按键一条播报。
     private func post(_ text: String, sequence: UInt64) {
         lastPostedSequence = sequence
         isSpeaking = deliveryMode == .sequential

@@ -5,12 +5,16 @@ import UIKit
 //
 // 设计要点见 KeySpeechAnnouncer 的注释。这里只负责：
 //   1. 在 controller.handle 之前推进序号
-//   2. 在 syncUI 之后立刻快照当前输入状态
+//   2. 拍下这次按键产生的输入状态
 //   3. 生成朗读文本并投递
 //
-// 为什么快照要在这里、并且紧挨 syncUI：
-//   - 候选栏刷新在 syncUI 内完成，播报必须基于刷新后的状态
-//   - 但不能再读 controller.state 的「未来值」：快照是值拷贝，天然隔离
+// 为什么快照只读 controller.state：
+//   - 朗读内容来自 RIME 输出（候选、拼音、上屏文本）与输入模式，
+//     全部是 KeyboardController 的值状态，与任何视图无关。
+//   - 快照是值拷贝，天然与之后的状态隔离，不会读到「未来值」。
+//
+// 因此播报**不依赖候选栏刷新**：默认通道（排队公告）在 syncUI 之前投递，
+// 只有仍然依赖候选格身份的诊断通道才等到 syncUI 之后。
 
 extension KeyboardViewController {
 
@@ -22,7 +26,10 @@ extension KeyboardViewController {
         keySpeechAnnouncer.beginInputEvent()
     }
 
-    /// 按键结束：快照 → 生成文本 → 投递。在 `syncUI(...)` 之后调用。
+    /// 按键结束：快照 → 生成文本 → 投递。
+    ///
+    /// 走旁白公告的通道在 `syncUI` 之前调用，`syncUI` 之后调用的是
+    /// 依赖候选格身份的诊断通道。两条路径都只读值快照，不依赖视图。
     ///
     /// - Parameters:
     ///   - kind: 按键类别
@@ -30,15 +37,16 @@ extension KeyboardViewController {
     ///   - sequence: `beginKeySpeechEvent()` 的返回值
     ///   - committedOverride: 本次已确定上屏的文本（若引擎未通过 lastRimeOutput 暴露）
     ///   - deletedOverride: 本次已确定删除的文本
+    @discardableResult
     func finishKeySpeechEvent(
         kind: KeySpeechKind,
         keyLabel: String,
         sequence: UInt64,
         committedOverride: String? = nil,
         deletedOverride: String? = nil
-    ) {
+    ) -> KeySpeechAnnouncer.Outcome {
         // 失败/中断的按键不应该播报。
-        guard keySpeechAnnouncer.isCurrent(sequence) else { return }
+        guard keySpeechAnnouncer.isCurrent(sequence) else { return .droppedSuperseded }
 
         let snapshot = makeKeySpeechSnapshot(
             kind: kind,
@@ -47,20 +55,49 @@ extension KeyboardViewController {
             deletedOverride: deletedOverride
         )
 
-        // 只读候选，不读键名（通道 1/2）：VoiceOver 已经在念键名，
-        // 键盘再拼一遍会让两套声音叠在一起听不清。
-        // 旁白通道（3/4/5）保留键名，因为那些通道不会抢占键名朗读。
-        let includeKeyName = !isAppVoiceChannel
+        // 是否在朗读文本里拼上键名，由通道自己决定。
+        // 默认不拼：旁白在触摸按键时已经念过键名，键盘再念一遍会让两套声音
+        // 叠在一起，听感与系统输入法差别很大。
+        let includeKeyName = keySpeechAnnouncer.channel.includesKeyName
         let text = KeySpeechComposer.compose(
             snapshot,
             detail: keySpeechAnnouncer.detail,
             table: CharacterDescriptionTableProvider.shared.table,
             includeKeyName: includeKeyName
         )
-        keySpeechAnnouncer.announce(text, sequence: sequence)
+        // 一次按键一条播报：不合并、不防抖。
+        let outcome = keySpeechAnnouncer.announce(text, sequence: sequence)
+        // 只要这次按键确实产生了一条播报（立即投递，或排队模式下已入队），
+        // 就算它已经覆盖了上屏内容，撤销 onCommittedText 留下的兜底播报，
+        // 否则同一个词会被念两遍。
+        //
+        // 不比对文本是否相等：部分提交时 `onCommittedText` 给的是
+        // 「已确认前缀 + 本段候选」，而 RimeOutput 里只有本段候选，
+        // 两者本来就不一样，比对相等会让去重失效。
+        //
+        // 序列过期的按键在函数开头就返回了，走不到这里，因此不会误清。
+        if outcome != .droppedNoSpeech, isCommitBearingKey(kind: kind, snapshot: snapshot) {
+            pendingCommittedAnnouncement = nil
+        }
+        return outcome
+    }
+
+    /// 这次按键是否已经把「上屏内容」读出来了。
+    ///
+    /// 判定不看具体文字，只看语义：上屏类按键只要产生了上屏文本，
+    /// 或本身是候选/空格/回车，就说明该读的内容已经由这次按键播报覆盖。
+    private func isCommitBearingKey(kind: KeySpeechKind, snapshot: KeySpeechSnapshot) -> Bool {
+        if let committed = snapshot.committedText, !committed.isEmpty { return true }
+        switch kind {
+        case .candidate, .space, .returnKey: return true
+        default: return false
+        }
     }
 
     /// 当前通道是否由键盘自己发声（通道 1 / 2）。
+    ///
+    /// 只用于诊断与设置页说明；播报内容不再按它分叉，
+    /// 而是统一由通道的 `includesKeyName` 决定。
     var isAppVoiceChannel: Bool {
         keySpeechAnnouncer.channel is AppVoiceSpeechChannel
     }
@@ -118,6 +155,9 @@ extension KeyboardViewController {
     }
 
     /// 上屏类按键（空格、回车、选词）。
+    ///
+    /// 上屏文本的去重与兜底撤销统一在 `finishKeySpeechEvent` 里处理，
+    /// 这里只负责把「本次已上屏的文本」交给快照。
     func speakCommit(
         kind: KeySpeechKind,
         keyLabel: String,
@@ -168,18 +208,23 @@ extension KeyboardViewController {
             keySpeechAnnouncer.detail = .standard
         }
 
+        // 默认每次按键立即播报（不合并）。旧版本存的 "coalesced" 已不存在，
+        // 解析失败会自动回到 .immediate，不需要额外迁移。
         let modeRaw = value(for: Self.keySpeechDeliveryModeKey) as? String ?? ""
         keySpeechAnnouncer.deliveryMode =
             KeySpeechAnnouncer.DeliveryMode(rawValue: modeRaw) ?? .immediate
 
-        // 播报通道（诊断 spike）。默认 4（焦点转移），与已发布行为一致。
+        // 播报通道。默认 3（旁白公告，低优先级排队）：
+        // 旁白先念键名，候选排在其后播出，不抢话、不移动焦点。
         // 存的是通道编号；解析失败一律回到默认值，不要静默切到别的通道。
         let channelNumber = value(for: Self.keySpeechChannelKey) as? Int
-        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .focusTransfer
+        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .queuedAnnouncement
         if keySpeechAnnouncer.channel.id != channelID {
             keySpeechAnnouncer.selectChannel(channelID, announceName: false)
-            installSpeechChannelCallbacks(keySpeechAnnouncer.channel)
         }
+        // 无条件注入回调：只有部分通道需要它，但漏注入会让整条通道静默，
+        // 而代价只是一次可选绑定赋值。
+        installSpeechChannelCallbacks(keySpeechAnnouncer.channel)
     }
 
     /// 通道 5 用：创建一个常驻、可聚焦、视觉上不可见的状态元素。
@@ -204,6 +249,8 @@ extension KeyboardViewController {
     /// 键盘消失/切换 App 时清理，避免下次出现念上次残留。
     func resetKeySpeech() {
         keySpeechAnnouncer.reset()
+        // 未投递的上屏播报也一并丢弃：键盘已经收起，迟到的朗读只会造成困惑。
+        pendingCommittedAnnouncement = nil
         candidateSpeechStatusElementCache?.removeFromSuperview()
         candidateSpeechStatusElementCache = nil
     }

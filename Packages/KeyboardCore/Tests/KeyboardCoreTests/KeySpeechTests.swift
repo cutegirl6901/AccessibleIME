@@ -94,6 +94,42 @@ final class KeySpeechTests: XCTestCase {
         )
     }
 
+    // MARK: 旁白通道：只补新信息，不重复键名
+
+    func testQueuedChannelReadsFirstCandidateForLetter() {
+        let s = snapshot(composition: "n", candidates: ["你"], comments: ["nǐ"])
+        XCTAssertEqual(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false),
+            "你，你们的你"
+        )
+    }
+
+    func testQueuedChannelReadsCommittedDirectText() {
+        // 智能引号：insertDirectText 走 .punctuation，上屏文本必须被读出来。
+        let s = snapshot(kind: .punctuation, keyLabel: "“", committed: "“")
+        XCTAssertEqual(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false),
+            "“"
+        )
+    }
+
+    func testQueuedChannelStaysSilentForBareDigit() {
+        // 旁白已经念过 "3"，没有候选就没有新信息。
+        let s = snapshot(kind: .digit, keyLabel: "3")
+        XCTAssertNil(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false)
+        )
+    }
+
+    func testQueuedChannelReadsCandidateForDigitInComposition() {
+        // 九宫格/数字参与组字时，候选才是新信息。
+        let s = snapshot(kind: .digit, keyLabel: "6", composition: "6", candidates: ["你"])
+        XCTAssertEqual(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false),
+            "你，你们的你"
+        )
+    }
+
     func testEnglishLetterReadsKeyOnly() {
         let s = snapshot(keyLabel: "a", inputMode: .english, candidates: ["你"])
         XCTAssertEqual(KeySpeechComposer.compose(s, detail: .standard, table: table), "a")

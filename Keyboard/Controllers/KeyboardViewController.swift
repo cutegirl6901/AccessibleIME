@@ -280,6 +280,12 @@ class KeyboardViewController: UIInputViewController {
     /// 上一次播报过的上屏文本。与候选去重分开，避免上屏写入后
     /// 把「同一候选再次出现」误判为重复而不播报。
     var lastAnnouncedCommittedText: String?
+    /// 等按键播报接手的上屏播报。
+    ///
+    /// `onCommittedText` 在 `controller.handle(...)` 内部触发，早于按键播报，
+    /// 所以不能立刻投递，也不能立刻丢弃；先登记，
+    /// 由本次按键的播报撤销，或由兜底路径补发。
+    var pendingCommittedAnnouncement: (committedText: String, spoken: String)?
     var accumulatedCandidates: [CandidateItem] {
         get { candidatePresentationStore.page.items }
         set { candidatePresentationStore.page.items = newValue }

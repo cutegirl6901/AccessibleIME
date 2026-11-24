@@ -6,6 +6,9 @@ import SwiftUI
 /// 这里配置的是「用户按键时的主动反馈」，与 VoiceOver 探索候选时的朗读是两条路径：
 /// 前者由键盘主动发公告，后者由候选按钮的 accessibilityLabel 决定。
 /// 两者共用同一份候选文本与逐字解释数据，因此不会出现读法不一致。
+///
+/// 默认配置（排队公告 + 每次按键播报）对齐系统输入法的听感：
+/// 旁白先念键名，候选排在其后播出；输入一个字符就播报一次，不合并。
 struct KeySpeechSettingsView: View {
     // 关闭完全访问时 App Group 不可用，主 App 与键盘扩展无法共享容器。
     // 键盘侧读取顺序是「标准存储优先、App Group 兜底」，这里同样写标准存储。
@@ -17,16 +20,15 @@ struct KeySpeechSettingsView: View {
     @AppStorage("key_speech_delivery_mode", store: UserDefaults.standard)
     private var deliveryMode: String = "immediate"
 
-    // 语音通道（诊断 spike）。默认 4 = 旁白焦点转移，与已发布行为一致。
+    // 语音通道。默认 3 = 旁白公告（低优先级排队）：旁白先念键名，候选随后跟上。
     @AppStorage("key_speech_channel", store: UserDefaults.standard)
-    private var channel: Int = 4
+    private var channel: Int = 3
 
     var body: some View {
         Form {
             Section {
-                Text("打开这一页后，先什么都不用改。回到键盘打一个字母，听有没有声音。")
-                Text("如果完全没有声音，在键盘上三击大小写键，听下一条通道有没有声音。")
-                Text("五条通道都试一遍，哪条能听到就用哪条。")
+                Text("默认设置不用改。回到键盘打一个字母，应该先听到键名，紧接着听到候选。")
+                Text("如果完全听不到候选，在键盘上三击大小写键换下一条语音通道，再试一次。")
             } header: {
                 Text("怎么用")
             }
@@ -47,7 +49,7 @@ struct KeySpeechSettingsView: View {
 
             Section {
                 Picker("播报方式", selection: $deliveryMode) {
-                    Text("立即（推荐）").tag("immediate")
+                    Text("每次按键都播报（推荐）").tag("immediate")
                     Text("等上一条读完").tag("sequential")
                     Text("关闭按键播报").tag("off")
                 }
@@ -61,23 +63,25 @@ struct KeySpeechSettingsView: View {
 
             Section {
                 Picker("语音通道", selection: $channel) {
+                    Text("三，旁白公告，排队朗读（推荐）").tag(3)
+                    Text("六，旁白公告，打断上一句").tag(6)
                     Text("一，应用语音，独立音频会话").tag(1)
                     Text("二，应用语音，播放类别混音").tag(2)
-                    Text("三，旁白公告，界面刷新之前").tag(3)
-                    Text("四，旁白焦点转移（默认）").tag(4)
+                    Text("四，旁白焦点转移").tag(4)
                     Text("五，旁白数值变化").tag(5)
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
             } header: {
-                Text("语音通道（诊断）")
+                Text("语音通道")
             } footer: {
                 Text(channelDescription)
                 Text("也可以在键盘上三击大小写键循环切换，切到时键盘会先读通道名。若听不到通道名，就说明这条通道没声音。")
             }
 
             Section {
-                Text("通道一、二由键盘自己发声，不排旁白的队，也不会移动焦点；新按键会打断上一句。")
+                Text("只有通道三走旁白自己的语音与语速，听感与系统输入法一致。")
+                Text("通道一、二由键盘自己发声，用固定语速，不会排队，也不会移动焦点。")
                 Text("候选词本身的无障碍标签始终包含逐字解释，无论这里怎么设置；关闭按键播报只影响「按键」反馈。")
             }
         }
@@ -100,18 +104,20 @@ struct KeySpeechSettingsView: View {
     }
 
     private var channelDescription: String {
-        // 说明每条通道在测什么，以及预期的失败表现。
+        // 说明每条通道的行为，以及什么时候该换别的通道。
         switch channel {
         case 1:
             return "一：键盘自己发声，不使用应用音频会话。若扩展里默认会话被静音，这条会绕开它。"
         case 2:
             return "二：键盘自己发声，并把音频会话设为播放混音。用于验证静音开关打开时能否出声。"
-        case 3:
-            return "三：在候选栏刷新之前发旁白公告。0.2.5 曾在此时机听到声音。"
+        case 4:
+            return "四：把旁白焦点移到第一个候选，靠焦点变化朗读。会抢走按键焦点，连续打字手感与系统键盘不同。"
         case 5:
             return "五：更新常驻状态元素并发送数值变化通知。旁白对数值变化通常更敏感。"
+        case 6:
+            return "六：每键一条旁白公告，但会打断上一句。快速连打时总是读最新一条，代价是键名可能被切掉。"
         default:
-            return "四：把旁白焦点移到第一个候选。0.2.11 确认能出声，但每键都要重扫无障碍树，可能较慢。"
+            return "三：发一条低优先级旁白公告，排在键名之后朗读。不移动焦点、不打断旁白，最接近系统输入法。"
         }
     }
 
@@ -122,7 +128,7 @@ struct KeySpeechSettingsView: View {
         case "off":
             return "按键不再主动播报，只能通过移动焦点逐项浏览候选。"
         default:
-            return "每次按键立即播报。系统可能打断上一条，但不会丢掉本该读的新内容。"
+            return "输入一个字符就播报一次，不合并。候选排在键名之后朗读，不打断旁白。"
         }
     }
 }

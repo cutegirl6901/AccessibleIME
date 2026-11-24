@@ -78,8 +78,9 @@ extension KeyboardViewController {
         // 推进按键序号；播报归属据此判定，过期的直接丢弃。
         let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertKey(key))
-        // 通道 3 必须在候选栏刷新之前投递（0.2.5 记录的有效时机）。
-        // 其余通道一律在 syncUI 之后。
+        // 旁白公告在候选栏刷新之前投递：0.2.5 记录过与 reloadData 同帧的公告
+        // 会被系统丢弃。播报内容来自 controller.state 的值快照，不依赖视图。
+        // 其余通道（依赖候选格身份）一律在 syncUI 之后。
         let channelTiming = keySpeechAnnouncer.channel.timing
         if channelTiming == .beforeUISync {
             speakInsertKey(key, sequence: speechSequence)
@@ -141,7 +142,7 @@ extension KeyboardViewController {
 
         let uiStartTime = CACurrentMediaTime()
         syncUI(with: effects)
-        // 其余通道在候选栏刷新完成后投递。
+        // 依赖候选格身份的诊断通道在候选栏刷新完成后投递。
         if channelTiming == .afterUISync {
             speakInsertKey(key, sequence: speechSequence)
         }
@@ -196,9 +197,16 @@ extension KeyboardViewController {
         }
         emitKeyPressFeedbackIfNeeded(for: sender)
         beginCandidateTrace(.legacy)
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertCandidate(candidate, kind: kind))
         endCandidateTrace()
         syncUI(with: effects)
+        speakCommit(
+            kind: .candidate,
+            keyLabel: candidate,
+            committedText: controller.state.lastRimeOutput?.committedText ?? candidate,
+            sequence: speechSequence
+        )
     }
 
     @objc func insertDirectText(_ sender: UIButton) {
@@ -222,8 +230,16 @@ extension KeyboardViewController {
         guard !isKeyboardHeightAdjusting else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
         let quote = nextSmartDoubleQuote(contextBeforeInput: textDocumentProxy.documentContextBeforeInput)
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertDirectText(quote))
         syncUI(with: effects)
+        // 上屏的是智能引号本身；按键播报只负责念出这一段新内容。
+        speakCommit(
+            kind: .punctuation,
+            keyLabel: quote,
+            committedText: quote,
+            sequence: speechSequence
+        )
     }
 
     private func nextSmartDoubleQuote(contextBeforeInput: String?) -> String {
@@ -243,7 +259,11 @@ extension KeyboardViewController {
         guard !isKeyboardHeightAdjusting else { return }
         guard let emoji = sender.title(for: .normal) else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertEmoji(emoji))
         syncUI(with: effects)
+        // emoji 不走 CommittedTextAnnouncement（那里只播报含汉字的文本），
+        // 因此由按键播报直接读出这个字符。
+        speakCommit(kind: .function, keyLabel: emoji, committedText: emoji, sequence: speechSequence)
     }
 }

@@ -52,6 +52,9 @@ extension KeyboardViewController {
     }
 
     /// 通道 4 / 5 需要控制器提供候选格与状态元素。
+    ///
+    /// 必须在**每次**换通道后调用，不能只在「通道号与默认值不同」时才调用：
+    /// 漏注入会让整条通道静默，而这只是两次可选绑定赋值。
     func installSpeechChannelCallbacks(_ channel: any KeySpeechChannel) {
         if let focus = channel as? FocusTransferSpeechChannel {
             focus.focusFirstCandidate = { [weak self] in
@@ -72,8 +75,11 @@ extension KeyboardViewController {
         guard !isKeyboardHeightAdjusting else { return }
         emitKeyPressFeedbackIfNeeded(for: sender)
         typoCorrectionRecallCoordinator.invalidateTypoCorrectionRecall()
+        let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.togglePage)
         syncUI(with: effects)
+        // 键名由旁白念；这里只补「现在在哪个键盘」这个新信息。
+        speakStateChange(.keyboardPage, sequence: speechSequence)
     }
 
     @objc func switchToLettersPage(_ sender: UIButton) {

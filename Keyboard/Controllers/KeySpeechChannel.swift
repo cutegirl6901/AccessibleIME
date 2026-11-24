@@ -18,27 +18,32 @@ import UIKit
 ///
 /// 1. 只读候选，不读键名。键名由 VoiceOver 自己念，两套声音叠在一起听不清。
 /// 2. 每个键都读，不去重。宁可重复，不可静默。
-/// 3. 新键立即打断旧句：先 stop，再让出一个 run loop，然后 speak。
-///    否则开头音节会被吞掉（与调音节拍器的 SpeechFeedback 结论一致）。
+/// 3. 旁白通道用 `.low` 优先级排队，让候选排在键名之后；键盘自发声通道
+///    仍走「先 stop 再 speak」的打断逻辑（与调音节拍器结论一致）。
 ///
 /// ## 默认行为
 ///
-/// 默认通道仍是 4（焦点转移），即当前已发布行为。只有用户三击 Shift 才切换。
+/// 默认通道是 3（旁白公告，低优先级排队）。这是与系统输入法最接近的一条：
+/// 旁白先念键名，候选排在其后播出，不抢话、不移动焦点。
+/// 通道 6 是同一种公告的「打断式」变体，用于快速连打时不想让队列落后。
+/// 通道 4（焦点转移）保留为诊断备选，不再作为默认。
 enum KeySpeechChannelID: Int, CaseIterable, Sendable {
     case appVoiceIsolated = 1
     case appVoicePlayback = 2
-    case announcementBeforeSync = 3
+    case queuedAnnouncement = 3
     case focusTransfer = 4
     case valueChanged = 5
+    case interruptingAnnouncement = 6
 
     /// 切到该通道时朗读的名字。用完整句子，避免只听到一个编号。
     var spokenName: String {
         switch self {
         case .appVoiceIsolated: return "通道一，应用语音，独立音频会话"
         case .appVoicePlayback: return "通道二，应用语音，播放类别混音"
-        case .announcementBeforeSync: return "通道三，旁白公告，界面刷新之前"
+        case .queuedAnnouncement: return "通道三，旁白公告，排队朗读"
         case .focusTransfer: return "通道四，旁白焦点转移"
         case .valueChanged: return "通道五，旁白数值变化"
+        case .interruptingAnnouncement: return "通道六，旁白公告，打断式"
         }
     }
 
@@ -46,9 +51,10 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
         switch self {
         case .appVoiceIsolated: return "应用语音（独立会话）"
         case .appVoicePlayback: return "应用语音（播放混音）"
-        case .announcementBeforeSync: return "旁白公告（刷新前）"
+        case .queuedAnnouncement: return "旁白公告（排队）"
         case .focusTransfer: return "旁白焦点转移"
         case .valueChanged: return "旁白数值变化"
+        case .interruptingAnnouncement: return "旁白公告（打断）"
         }
     }
 
@@ -59,12 +65,14 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
             return "键盘自己发声，不使用应用音频会话。若扩展里默认会话被静音，这条会绕开它。"
         case .appVoicePlayback:
             return "键盘自己发声，并把音频会话设为播放混音。用于验证静音开关打开时是否仍能出声。"
-        case .announcementBeforeSync:
-            return "在候选栏刷新之前发旁白公告。0.2.5 曾在此时机听到声音。"
+        case .queuedAnnouncement:
+            return "在候选栏刷新之前发旁白公告，并标记为低优先级排队。旁白会先念键名，再念候选。"
         case .focusTransfer:
             return "把旁白焦点移到第一个候选。0.2.11 确认能出声，但每键都要重扫无障碍树。"
         case .valueChanged:
             return "更新一个常驻候选状态元素并发送数值变化通知。旁白对数值变化通常更敏感。"
+        case .interruptingAnnouncement:
+            return "同样每键一条旁白公告，但用默认优先级：会打断上一句，快速连打时永远听最新一条。"
         }
     }
 }
@@ -81,11 +89,22 @@ protocol KeySpeechChannel: AnyObject {
     var id: KeySpeechChannelID { get }
     var timing: KeySpeechDeliveryTiming { get }
 
-    /// 朗读一段文本。文本已经由上层生成好（只含候选，不含键名）。
+    /// 本次播报文本是否要包含键名。
+    ///
+    /// 排旁白队列的通道不包含键名：旁白在焦点落到按键时已经念过键名，
+    /// 再拼一遍就是双重朗读。这与系统输入法的听感一致。
+    var includesKeyName: Bool { get }
+
+    /// 朗读一段文本。文本已经由上层生成好。
     func speak(_ text: String)
 
     /// 立即停止当前朗读。
     func stop()
+}
+
+extension KeySpeechChannel {
+    /// 默认不拼键名：旁白自己会念。只有明确需要自报键名的通道才覆盖。
+    var includesKeyName: Bool { false }
 }
 
 // MARK: - 应用语音
@@ -100,6 +119,8 @@ class AppVoiceSpeechChannel: NSObject, KeySpeechChannel, AVSpeechSynthesizerDele
 
     let id: KeySpeechChannelID
     var timing: KeySpeechDeliveryTiming { .afterUISync }
+    /// 键盘自己发声，旁白不会念这次按键，所以必须把键名一起读出来。
+    var includesKeyName: Bool { true }
 
     private let synthesizer = AVSpeechSynthesizer()
     private var currentUtterance: AVSpeechUtterance?
@@ -232,13 +253,24 @@ final class PlaybackSessionSpeechChannel: AppVoiceSpeechChannel {
 
 // MARK: - 旁白通道
 
-/// 通道 3：在候选栏刷新之前发公告。
+/// 通道 3（默认）：在候选栏刷新之前发公告，并标记为低优先级排队。
 ///
-/// 0.2.5 的提交信息明确记录过：这个时机下 announcement 能听到；
-/// 与 reloadData 同帧时会被系统丢弃。这里把它单独做成一条通道做对照。
+/// ## 为什么是 `.low`
+///
+/// 用普通 `String` 投递等于 `default` 优先级：**打断**旁白正在念的键名，
+/// 两条语音互相抢，这就是历史上「时有时无」的直接原因。
+/// Apple 文档对 `UIAccessibilityPriority.low` 的定义是
+/// 「排队，等其它语音说完再播」，正好得到「n → 你」的自然顺序，
+/// 与系统输入法的听感一致，也不需要等待 `announcementDidFinish`。
+///
+/// ## 为什么在候选栏刷新之前
+///
+/// 0.2.5 的真机记录：与 `reloadData` 同帧投递的公告会被系统丢弃。
+/// 这里在 `syncUI` 之前投递，且播报内容来自 `controller.state` 的值快照，
+/// 不依赖任何视图刷新。
 @MainActor
 final class AnnouncementSpeechChannel: KeySpeechChannel {
-    let id: KeySpeechChannelID = .announcementBeforeSync
+    let id: KeySpeechChannelID = .queuedAnnouncement
     var timing: KeySpeechDeliveryTiming { .beforeUISync }
 
     private(set) var speakCallCount = 0
@@ -247,6 +279,35 @@ final class AnnouncementSpeechChannel: KeySpeechChannel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         speakCallCount += 1
+        UIAccessibility.post(notification: .announcement, argument: AccessibilityAnnouncement.queued(trimmed))
+    }
+
+    func stop() {
+        // 公开 API 无法取消已投递的公告。
+    }
+}
+
+/// 通道 6：与通道 3 相同的公告，但用默认优先级——打断上一句。
+///
+/// 取舍：
+/// - 通道 3（`.low`）不打断旁白的键名，单键输入最自然；但快速连打时
+///   每条都要排队，候选会越来越落后。
+/// - 通道 6（`.default`）会打断正在念的内容，因此永远读最新一条，
+///   代价是键名可能被切掉。
+///
+/// 两者都是「一次按键一条播报」，区别只在是否允许打断。
+@MainActor
+final class InterruptingAnnouncementSpeechChannel: KeySpeechChannel {
+    let id: KeySpeechChannelID = .interruptingAnnouncement
+    var timing: KeySpeechDeliveryTiming { .beforeUISync }
+
+    private(set) var speakCallCount = 0
+
+    func speak(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        speakCallCount += 1
+        // 直接用 String 投递 = default 优先级：打断上一句。
         UIAccessibility.post(notification: .announcement, argument: trimmed)
     }
 
@@ -255,7 +316,10 @@ final class AnnouncementSpeechChannel: KeySpeechChannel {
     }
 }
 
-/// 通道 4：把旁白焦点移到第一个候选格。即当前已发布行为。
+/// 通道 4：把旁白焦点移到第一个候选格。
+///
+/// 诊断备选，不再是默认。它会把焦点从按键抢到候选栏，
+/// 连续打字时手感与系统输入法差别明显。
 ///
 /// 通过闭包回调交给控制器执行，因为只有控制器知道候选栏在哪。
 @MainActor
@@ -320,12 +384,14 @@ enum KeySpeechChannelFactory {
             return AppVoiceSpeechChannel(id: .appVoiceIsolated, usesApplicationAudioSession: false)
         case .appVoicePlayback:
             return PlaybackSessionSpeechChannel()
-        case .announcementBeforeSync:
+        case .queuedAnnouncement:
             return AnnouncementSpeechChannel()
         case .focusTransfer:
             return FocusTransferSpeechChannel()
         case .valueChanged:
             return ValueChangedSpeechChannel()
+        case .interruptingAnnouncement:
+            return InterruptingAnnouncementSpeechChannel()
         }
     }
 }

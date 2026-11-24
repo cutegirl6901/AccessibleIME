@@ -253,12 +253,16 @@ extension KeyboardViewController {
 
     /// 文字真正进入输入框后，用 VoiceOver 播报「词 + 逐字解释」。
     ///
-    /// 这是纯键盘输入唯一的逐字反馈点：用户按空格或回车确认候选时，
-    /// KeyboardController 以 .space / .returnKey 为来源提交文本；触摸候选则
-    /// 走 .candidate。两条路径最终都经过这里，因此逐字反馈只需实现一次。
+    /// 时序难点：`onCommittedText` 在 `controller.handle(...)` **内部**触发，
+    /// 而按键播报的 `speakCommit` 在 `syncUI` 之后才执行。若这里直接投递，
+    /// 同一个词会被念两遍（用户反馈过「读重复了」）。
+    ///
+    /// 因此这里只**登记**待播内容，由两条路径之一消费：
+    /// - 本次按键的播报已经覆盖了上屏内容 → 撤销登记；
+    /// - 没有任何按键播报路径（引擎内部提交、或按键播报关闭）→ 主线程兜底投递。
     ///
     /// 决策逻辑放在 CommittedTextAnnouncement（纯函数、有单测覆盖），
-    /// 这里只负责投递通知。
+    /// 这里只负责登记、去重与投递。
     func announceCommittedTextIfNeeded(_ event: CommittedTextEvent) {
         // 不使用 isVoiceOverRunning 判断：键盘扩展里该返回值不可靠，
         // VoiceOver 关闭时 post 本身是 no-op，没有副作用。
@@ -271,9 +275,36 @@ extension KeyboardViewController {
             )
         else { return }
 
+        // 按键播报关闭时没有别的路径会读它，直接发声。
+        guard keySpeechAnnouncer.deliveryMode != .off else {
+            postCommittedAnnouncement(spoken, committedText: event.text)
+            return
+        }
+
+        pendingCommittedAnnouncement = (committedText: event.text, spoken: spoken)
+        // 兜底：本次按键没有走到 speakCommit 时（引擎内部提交等），
+        // 下一个主线程循环把这条补发出去。
+        // 用 Task 而不是 DispatchQueue：在 Swift 6 下天然继承 MainActor 隔离，
+        // 与 KeySpeechAnnouncer 里的异步兜底写法保持一致。
+        Task { @MainActor [weak self] in
+            self?.flushPendingCommittedAnnouncementIfNeeded()
+        }
+    }
+
+    /// 没有按键播报接手时，把登记的上屏播报补发出去。
+    func flushPendingCommittedAnnouncementIfNeeded() {
+        guard let pending = pendingCommittedAnnouncement else { return }
+        pendingCommittedAnnouncement = nil
+        // 键盘已经收起时不要再发声：用户此时在别的界面，
+        // 一句迟到的候选朗读只会造成困惑。
+        guard viewIfLoaded?.window != nil else { return }
+        postCommittedAnnouncement(pending.spoken, committedText: pending.committedText)
+    }
+
+    private func postCommittedAnnouncement(_ spoken: String, committedText: String) {
         candidateAnnouncementSequence &+= 1
-        lastAnnouncedCommittedText = event.text
-        UIAccessibility.post(notification: .announcement, argument: spoken)
+        lastAnnouncedCommittedText = committedText
+        AccessibilityAnnouncement.postQueued(spoken)
     }
 
     func appendToCandidateBar(insertedCount: Int? = nil) {
