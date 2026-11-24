@@ -94,14 +94,6 @@ extension KeyboardViewController {
         }
     }
 
-    /// 当前通道是否由键盘自己发声（通道 1 / 2）。
-    ///
-    /// 只用于诊断与设置页说明；播报内容不再按它分叉，
-    /// 而是统一由通道的 `includesKeyName` 决定。
-    var isAppVoiceChannel: Bool {
-        keySpeechAnnouncer.channel is AppVoiceSpeechChannel
-    }
-
     // MARK: 快照
 
     /// 从**当前**输入状态构造快照。
