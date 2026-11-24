@@ -1,5 +1,9 @@
 # CHANGELOG
 
+> 说明：本文件保留了从上游 Universe Keyboard 继承的历史条目。
+> 那些条目里的 `docs/...` 链接指向上游文档，建原型时未随仓库带入，
+> 因此已退化为纯文本（避免死链），内容本身未改动。
+
 ## 2026-11-24 — 0.2.18 (21) 候选朗读改为旁白排队播报（**已构建、已发布**）
 
 - 默认播报通道从「旁白焦点转移」改为「旁白公告（低优先级排队）」：旁白先念键名，
@@ -26,12 +30,12 @@
 
 ## 2026-10-28 — B34 候选上屏打点（本地交付，未发布）
 
-- 键盘出现时若诊断与“显示”类别均已开启，此后键盘可为候选选择记录不含文字内容的 `candidate.commit_trace` 事件（被拦截的选择仅可能计入尚未到期且已打开的记录；记录和事件可能因关闭开关、进程结束、日志暂停、队列已满或其他写入条件而缺失）：各类宿主写入次数、宿主回调次数、被拦截的选择次数、上屏文字重复出现次数的取样、关闭原因与耗时，用于排查重复上屏（B34）。读法见 [DEBUGGING](docs/DEBUGGING.md)。
+- 键盘出现时若诊断与“显示”类别均已开启，此后键盘可为候选选择记录不含文字内容的 `candidate.commit_trace` 事件（被拦截的选择仅可能计入尚未到期且已打开的记录；记录和事件可能因关闭开关、进程结束、日志暂停、队列已满或其他写入条件而缺失）：各类宿主写入次数、宿主回调次数、被拦截的选择次数、上屏文字重复出现次数的取样、关闭原因与耗时，用于排查重复上屏（B34）。读法见 DEBUGGING。
 - 这些字段是线索，不证明根因；真实宿主、真机和不同宿主之间的差异均未验证。证据仅限本地 Core、扩展与模拟器 Debug/Release 测试，不代表托管 CI 或 Release 通过。
 
 ## 2026-10-27 — 1.0 (177) 外部 TestFlight
 
-- #244 键盘高度不再把过渡高度当预算；#247 触区快照和 canvas 跟随当前几何；#248 九宫格始终预留 34pt 拼音栏；#249「实验性 Liquid Glass 材质」仅 DEBUG 可见，正式构建在主 App 启动时清除存储值。Human 决定将 1.0 (177) 发给外部测试组，详见[发布决定](docs/product-decisions/RELEASE-2026-10-27-BUILD177-external-testflight-decision.md)。
+- #244 键盘高度不再把过渡高度当预算；#247 触区快照和 canvas 跟随当前几何；#248 九宫格始终预留 34pt 拼音栏；#249「实验性 Liquid Glass 材质」仅 DEBUG 可见，正式构建在主 App 启动时清除存储值。Human 决定将 1.0 (177) 发给外部测试组，详见发布决定。
 
 ## 2026-10-24 — UI-3 候选字大小（本地交付，未发布）
 
@@ -50,7 +54,7 @@
 - 默认行高45、无路径总高254/含路径288保持；按方向与实际预算夹取，不隐式写回。旋转完成后条件性提升根高度请求750→999，并在下一旋转、消失、约束替换、窗口移除及宿主suspend时还原；已消费页面标记FIFO保留最近64个。
 - 证据层级：已有本地Core/布局/页面测试、Debug/Release模拟器构建及Human iPhone13Pro单机观察；Human总体通过不是测量，Release真机配置/版本/安装时间未独立核验。
 - 已知限制：预算不足四行40pt时整面隐藏；999不保证识别求解前宿主软预算；真实低预算/分屏/浮动未独立验证；竖屏最大占比与是否含系统底栏仍UNKNOWN（Human已接受待测），端点震动来源UNKNOWN且已接受；64条之外旧标记不承诺去重。
-- 仅本地交付记录，不代表托管CI、独立Round2、merge或Release通过；本轮不push、PR、merge或TestFlight。详见[数值与限制](docs/KEYBOARD_VALUES.md)。
+- 仅本地交付记录，不代表托管CI、独立Round2、merge或Release通过；本轮不push、PR、merge或TestFlight。详见数值与限制。
 
 ## 2026-10-20 — UI-1 × UI-2 受控本地集成（未推送，待独立复核）
 
@@ -84,7 +88,7 @@
 - 候选viewport裁剪绘制，操作区贴完整右边且命中不侵入候选；保留展开/关闭双模式、滚动分页与恢复阻断。
 - 操作区复用系统材质与语义底色；减少透明度使用不透明兜底，恢复提示隐藏操作层。展开动画避免降低材质祖先alpha。
 - 历史UI-1阶段：UI-2的T9动态0/34pt试验因缺少真实Extension证据撤回，当时保留固定34pt；本次集成已由上方0/34pt Sticky合同取代。
-- [验证与限制](docs/evidence/keyboard-compact-header-001/verification.md)；无产品push/PR/merge/TestFlight，不代表Quality或Product Gate通过。
+- 验证与限制；无产品push/PR/merge/TestFlight，不代表Quality或Product Gate通过。
 
 ## 2026-10-19 — Input Reliability Batch 3（本地候选，待独立 Review）
 
@@ -108,7 +112,7 @@
 - 加入默认关闭的有限成本探针、真实route scope、序列边界、freeze快照及时间锚点；不增加Release持久化日志或Extension部署。
 - 协调器和probe使用hostless Extension测试；Swift格式检查覆盖ExtensionTests，保留main现有模拟器准备和生命周期恢复逻辑。
 - 固定main5927233整合候选完成完整本地CI与DEBUG52回归；P2仅接受有界provider计数/elapsed，整体性能未知保留，父Active。
-- [复用说明](docs/debugging/int003-query-cost-probe-reuse.md)。尚未commit/push/merge，不代表Release或父Gate/Close。
+- 复用说明。尚未commit/push/merge，不代表Release或父Gate/Close。
 
 
 ## 2026-10-07 — 删除键可滑动擦除并清空光标前文字
@@ -181,7 +185,7 @@
 
 - 全部主 App 开关改走共享 `AppSwitch`（系统 `UISwitch` + `AppSwitchChrome`）。浅色开启黑槽白点；深色开启白槽黑点；关闭态小圆点保持白色。
 - 独立 Quality 结论为 **Pass with conditions**，新 SHA 增量核对完成；App + Keyboard Debug 测试为 `UniverseKeyboardTests 361 / 9 skipped`、`KeyboardTests 11`，历史记录的测试计数已校正。实现 SHA 为 `5d3880b13109a65b8e441ded74b82f9927ffb9b4`；Product Gate 已另行记录，push 或 Release 仍未授权。
-- Human Product Owner 在 iPhone 13 Pro / iOS 27 完成设置首页、诊断页、模糊音 Form 的四态观察，详见 [`Human-attested record`](docs/evidence/app-switch-contrast-001-human-attested-observation-2026-09-15.md)；该观察非 Device-attested，Gate 接受范围见下方 Product Gate 记录。
+- Human Product Owner 在 iPhone 13 Pro / iOS 27 完成设置首页、诊断页、模糊音 Form 的四态观察，详见 `Human-attested record`；该观察非 Device-attested，Gate 接受范围见下方 Product Gate 记录。
 
 ## 2026-09-15 — APP-SWITCH-CONTRAST-001 Human Product Gate
 
@@ -218,7 +222,7 @@
 
 - 主 App 不再把残留的 `rime_deploying` 恢复成无法操作的「正在部署…」。进程被结束后，该标志视为中断失败，抑制自动重试，并保留手动「应用并重新部署」。
 - 部署进行中可以取消；取消不会让已失效的部署结果覆盖后续重试。不改变非活动卸载的 CS-05 路由合同。
-- Human-attested：覆盖安装后首次打开为部署失败且可重试。非活动卸载后的前台自动部署记为 [`TD-018`](docs/TECH_DEBT.md#td-018-foreground-auto-deploy-after-inactive-scheme-uninstall)，本片不做。
+- Human-attested：覆盖安装后首次打开为部署失败且可重试。非活动卸载后的前台自动部署记为 `TD-018`，本片不做。
 
 ## 2026-09-08 — Cross-scheme CS-03/CS-04 (local)
 
@@ -354,7 +358,7 @@ Change history for Universe Keyboard. Entries are in reverse chronological order
 - 独立双审发现 expiration 异步跳主线程仍有交错窗口；现由线程安全状态门让 expiration 与正常返回原子争夺唯一终止权，过期路径不等待 librime 返回即可立即失败完成系统任务。
 - 自动完成通知只在真实完成结果取得成功终止权后发布；安全跳过不误发完成通知。YAML、标准 RIME、私密 coordinator 与设置 apply 边界均闭合取消状态；已完成全部请求 scope 时不再补发矛盾失败通知。
 - 最终本地实现 `3f94073` 进一步为潜在非协作 phase 增加返回后取消检查，并用直接模型测试覆盖 late success、正常成功与未完成 scope 通知条件；聚焦 `23/23`、App `252 passed / 3 device-only skipped`、Keyboard `11/11`、严格 Debug/Release build 均通过，独立 Architecture / Quality delta review 均为 `Pass with conditions`。
-- 正式自然调度、真实 expiration 后 retry、手机通知、`TD-002`、Product Gate、push、merge 与 Release 仍保持开放。预冻结 manifest/receipt 前置包已准备但保持 `HOLD`，证据见 [`docs/evidence/rime-background-sync-terminal-lifecycle-2026-08-31.md`](docs/evidence/rime-background-sync-terminal-lifecycle-2026-08-31.md) 与 [`device preflight`](docs/evidence/rime-background-sync-device-run-preflight-2026-08-31.md)。
+- 正式自然调度、真实 expiration 后 retry、手机通知、`TD-002`、Product Gate、push、merge 与 Release 仍保持开放。预冻结 manifest/receipt 前置包已准备但保持 `HOLD`，证据见 `docs/evidence/rime-background-sync-terminal-lifecycle-2026-08-31.md` 与 `device preflight`。
 
 ## 2026-09-03 — F-02 内置朙月离线闭包合入 `main`
 
@@ -373,14 +377,14 @@ Change history for Universe Keyboard. Entries are in reverse chronological order
 - 两阶段自动同步在标准 RIME 已完成后先切换到 Universe 设置语义，再观察取消；后台时间恰好在阶段间被系统收回时，不再把同一 RIME 范围同时显示为“已更新”和“未完成”。
 - `BGProcessingTask` 的正常返回与 expiration 统一经过一次性终止门：取消只请求一次，任务只完成一次，过期后不得报告成功。
 - 键盘活跃导致跳过时设置 15 分钟最早重试时间，避免向系统反复提交已经过去的执行日期；不改变用户选择的每日/每周正式冷却周期。
-- 本地 CI 等价门禁已通过；实现提交 `0f59770` 尚未 push / 独立复核，正式自然调度、手机通知、Product Gate、merge 与 Release 均未声明通过。证据见 [`docs/evidence/rime-background-sync-lifecycle-remediation-2026-08-30.md`](docs/evidence/rime-background-sync-lifecycle-remediation-2026-08-30.md)。
+- 本地 CI 等价门禁已通过；实现提交 `0f59770` 尚未 push / 独立复核，正式自然调度、手机通知、Product Gate、merge 与 Release 均未声明通过。证据见 `docs/evidence/rime-background-sync-lifecycle-remediation-2026-08-30.md`。
 
 ## 2026-08-29 — 修复 RIME 后台自动同步回调隔离崩溃
 
 - `BGProcessingTask` 注册入口改为显式使用主队列，与 `RimeAutomaticSyncScheduler` 的 `MainActor` 隔离保持一致；实际 RIME 标准同步仍在可取消的异步任务中执行，不进入 Keyboard Extension 或按键热路径。
 - 后台标准同步成功继续复用统一 RIME 通知服务；只有用户已开启 App 通知、RIME 类别、对应通知子项且系统授权允许时，才发送“自动同步完成”。通知不包含目录、词典、恢复码或输入内容。
 - 新增注册队列不变量、自动标准同步成功文案和统一通知投递回归测试。自然后台调度与锁屏通知仍需新构建的真机证据，不由模拟器测试替代。
-- KOS 执行证据见 [`docs/evidence/rime-background-sync-crash-fix-2026-08-29.md`](docs/evidence/rime-background-sync-crash-fix-2026-08-29.md)。
+- KOS 执行证据见 `docs/evidence/rime-background-sync-crash-fix-2026-08-29.md`。
 
 ## 2026-08-28 — 方案交付 PR #83 合入 main
 
