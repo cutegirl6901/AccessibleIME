@@ -26,6 +26,118 @@ extension KeyboardViewController {
         keySpeechAnnouncer.beginInputEvent()
     }
 
+    /// 按键结束的**第二条路径**：登记一条待播报，等引擎快照真正落地后再发声。
+    ///
+    /// ## 为什么要延迟
+    ///
+    /// 异步引擎（`isResponsiveRimePipelineEnabled`）下 `handle()` 立即返回，
+    /// 这时 `state.lastRimeOutput` 还是旧值。同步播报会持续朗读上一次的候选
+    /// （真机现象：不管输入什么都重复同一句释义）。
+    ///
+    /// ## 两种落地方式
+    ///
+    /// - 引擎快照在 `onResponsivePresentationNeeded` 里落地 → 立刻拍新鲜快照播报；
+    /// - 300ms 内没等到（非异步路径、或本次按键不产生快照，
+    ///   例如大小写切换）→ 超时兜底用当前状态照发。
+    ///
+    /// 两条路径最终都汇入 `flushDeferredKeySpeech`，去重与序号判定只有一份实现。
+    func beginDeferredKeySpeech(
+        kind: KeySpeechKind,
+        keyLabel: String,
+        sequence: UInt64,
+        committedOverride: String? = nil,
+        deletedOverride: String? = nil
+    ) {
+        // 先取消上一条的兜底：新按键已经让它的内容作废。
+        deferredKeySpeechTimeoutTask?.cancel()
+        deferredKeySpeech = DeferredKeySpeech(
+            sequence: sequence,
+            kind: kind,
+            keyLabel: keyLabel,
+            committedOverride: committedOverride,
+            deletedOverride: deletedOverride,
+            revisionAtRegistration: controller.state.compositionRevision
+        )
+        deferredKeySpeechRegisteredCount += 1
+        scheduleDeferredKeySpeechTimeout(sequence: sequence)
+    }
+
+    /// 超时兜底：到点仍未落地的播报照发，避免整次按键静默。
+    private func scheduleDeferredKeySpeechTimeout(sequence: UInt64) {
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.deferredKeySpeechTimeout)
+            guard !Task.isCancelled, let self else { return }
+            guard self.deferredKeySpeech?.sequence == sequence else { return }
+            self.flushDeferredKeySpeech(reason: "timeout")
+        }
+        deferredKeySpeechTimeoutTask = task
+    }
+
+    /// 引擎快照落地后的播报入口。由 `onResponsivePresentationNeeded` 调用。
+    ///
+    /// 此时 `applyRimeOutput` 已经执行完，`state.lastRimeOutput` 是本轮的新值。
+    ///
+    /// - Parameter timing: 只投递与该时机匹配的通道。
+    ///   `beforeUISync` 通道（默认的排队公告）在 `syncUI` **之前**投递，
+    ///   这是 0.2.5 记录过的结论：与 `reloadData` 同帧的公告会被系统丢弃。
+    ///   `afterUISync` 通道（焦点转移）必须等候选栏刷新完，否则移到空列表上。
+    func deliverDeferredKeySpeechIfNeeded(timing: KeySpeechDeliveryTiming) {
+        guard let pending = deferredKeySpeech else { return }
+
+        // 这条登记必须仍是最新一次按键。
+        //
+        // 否则会出现这样的错读：按下字母 n 后立刻按删除，删除自己的快照
+        // 先到达，就会用「删除之后的 state」去播报 n 的候选。
+        // 删除、选词、切换等动作都会推进序号，因此用序号判定即可。
+        guard keySpeechAnnouncer.isCurrent(pending.sequence) else {
+            deferredKeySpeechTimeoutTask?.cancel()
+            deferredKeySpeech = nil
+            return
+        }
+
+        // 通道可能在等待期间被切换；以投递时的实际通道为准。
+        guard keySpeechAnnouncer.channel.timing == timing else { return }
+        flushDeferredKeySpeech(reason: "snapshot-\(timing == .beforeUISync ? "pre" : "post")")
+    }
+
+    /// 拍快照并投递，然后清空登记。
+    private func flushDeferredKeySpeech(reason: String) {
+        guard let pending = deferredKeySpeech else { return }
+        if reason == "timeout" {
+            deferredKeySpeechTimedOutCount += 1
+        } else {
+            deferredKeySpeechDeliveredCount += 1
+        }
+        deferredKeySpeech = nil
+        deferredKeySpeechTimeoutTask?.cancel()
+
+        // 诊断日志走运行时开关（Logger 的 logging_enabled），不受 #if DEBUG 限制。
+        // 这样 Release 构建在真机上也能看到按键这一刻读到的到底是新值还是旧值。
+        if Logger.isLiveCategoryEnabled(.performance) {
+            Logger.shared.info(
+                "KEYSPEECH flush reason=\(reason) seq=\(pending.sequence) "
+                    + "registered=\(deferredKeySpeechRegisteredCount) "
+                    + "delivered=\(deferredKeySpeechDeliveredCount) "
+                    + "timedOut=\(deferredKeySpeechTimedOutCount) "
+                    + "kind=\(String(describing: pending.kind)) key=\(pending.keyLabel) "
+                    + "revisionAtRegister=\(pending.revisionAtRegistration) "
+                    + "revisionNow=\(controller.state.compositionRevision) "
+                    + "raw=\(controller.state.lastRimeOutput?.rawInput ?? "nil") "
+                    + "candidates=\(controller.state.lastRimeOutput?.candidates.count ?? 0) "
+                    + "first=\(controller.state.lastRimeOutput?.candidates.first?.text ?? "nil")",
+                category: .performance
+            )
+        }
+
+        finishKeySpeechEvent(
+            kind: pending.kind,
+            keyLabel: pending.keyLabel,
+            sequence: pending.sequence,
+            committedOverride: pending.committedOverride,
+            deletedOverride: pending.deletedOverride
+        )
+    }
+
     /// 按键结束：快照 → 生成文本 → 投递。
     ///
     /// 走旁白公告的通道在 `syncUI` 之前调用，`syncUI` 之后调用的是
@@ -222,6 +334,8 @@ extension KeyboardViewController {
     /// 键盘消失/切换 App 时清理，避免下次出现念上次残留。
     func resetKeySpeech() {
         keySpeechAnnouncer.reset()
+        deferredKeySpeechTimeoutTask?.cancel()
+        deferredKeySpeech = nil
         // 未投递的上屏播报也一并丢弃：键盘已经收起，迟到的朗读只会造成困惑。
         pendingCommittedAnnouncement = nil
     }

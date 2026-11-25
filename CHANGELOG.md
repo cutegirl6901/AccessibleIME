@@ -4,6 +4,43 @@
 > 那些条目里的 `docs/...` 链接指向上游文档，建原型时未随仓库带入，
 > 因此已退化为纯文本（避免死链），内容本身未改动。
 
+## 2026-11-25 — 0.2.19 (22) 修复按键播报读到旧候选（**待构建验证**）
+
+真机现象：不论输入什么字符，都重复朗读同一句旧候选释义（「我，我们的我」），
+必须手动摸到候选区才能知道实际打出的字。
+
+根因：RIME 查询在 Release 路径上是**异步**的。Bootstrap 里设置了
+`controller.isResponsiveRimePipelineEnabled = true` 与 `isThreadAffineRimeOwnerEnabled = true`，
+于是 `controller.handle(.insertKey)` 只把键入队（`affine.scheduleProcessKey`）就立即返回，
+此时 `state.lastRimeOutput` 仍是**上一次**的值（首次为 nil）。
+而按键播报在 `handle()` 返回后**同步**拍快照，读到的正是这份旧值。
+候选区之所以正确，是因为 UI 要等快照真正落地才刷新。
+
+修复：
+
+- 播报拆成两步。按键时只登记（`beginDeferredKeySpeech`），
+  等引擎快照落地（`onResponsivePresentationNeeded` → `deliverDeferredKeySpeechIfNeeded`）
+  后再拍快照播报。此时 `applyRimeOutput` 已执行，读到的是本次按键的结果。
+- 按通道的 `timing` 分两次投递：公告类（默认）在 `syncUI` 之前
+  （与 `reloadData` 同帧的公告会被系统丢弃，见 0.2.5 记录），
+  焦点转移类在其后。
+- 300ms 超时兜底：快照回调没来时用当前状态照发，宁可落后一帧也不静默。
+  非异步路径（`isResponsiveRimePipelineEnabled == false`）不等超时，立即播报。
+- 删除 `insertKey` 里原来的 `afterUISync` 同步播报，避免与延迟路径重复。
+
+顺带修复：
+
+- 按键的 `accessibilityTraits` 之前是 `= .keyboardKey`，会覆盖 `UIButton` 默认的
+  `.button` 语义。改为 `[.keyboardKey, .button]`，与系统键盘一致。
+- 诊断日志改用运行时开关 `Logger.isLiveCategoryEnabled(.performance)`，
+  不再依赖 `#if DEBUG`（此前写在 Debug 块里，Release 构建中会被整个剔除，
+  真机上根本看不到）。
+
+未验证：本地无 Swift 工具链，改动未经编译。需构建后真机确认
+「每次按键播报的是本次输入」以及延迟是否可接受。
+若仍重复同一候选，说明快照回调没有前进，应查 `applyResponsivePublishedSnapshot`
+里的 latest-only 合并分支（`dualGatePendingPresentationSnapshot`）。
+
 ## 2026-11-24 — 0.2.18 (21) 候选朗读改为旁白排队播报（**已构建、已发布**）
 
 - 默认播报通道从「旁白焦点转移」改为「旁白公告（低优先级排队）」：旁白先念键名，

@@ -190,9 +190,19 @@ extension KeyboardViewController {
         emitKeyPressFeedbackIfNeeded(for: sender)
         let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertSpace)
+        // 与字母键同理：异步引擎下 handle() 返回时本次上屏文本可能还没落到
+        // state.lastRimeOutput，同步读会拿到 nil（表现为只念「空格」而不是上屏的字）。
+        // 统一交给延迟播报，等快照落地后读真实上屏文本。
+        beginDeferredKeySpeech(kind: .space, keyLabel: "空格", sequence: speechSequence)
+        if !controller.isResponsiveRimePipelineEnabled,
+            keySpeechAnnouncer.channel.timing == .beforeUISync
+        {
+            deliverDeferredKeySpeechIfNeeded(timing: .beforeUISync)
+        }
         syncUI(with: effects)
-        // 有上屏文本就播报上屏内容（含逐字解释），否则读「空格」。
-        speakCommit(kind: .space, keyLabel: "空格", committedText: nil, sequence: speechSequence)
+        if !controller.isResponsiveRimePipelineEnabled {
+            deliverDeferredKeySpeechIfNeeded(timing: .afterUISync)
+        }
     }
 
     @objc func insertReturn(_ sender: UIButton) {
@@ -200,7 +210,15 @@ extension KeyboardViewController {
         emitKeyPressFeedbackIfNeeded(for: sender)
         let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertReturn)
+        beginDeferredKeySpeech(kind: .returnKey, keyLabel: "回车", sequence: speechSequence)
+        if !controller.isResponsiveRimePipelineEnabled,
+            keySpeechAnnouncer.channel.timing == .beforeUISync
+        {
+            deliverDeferredKeySpeechIfNeeded(timing: .beforeUISync)
+        }
         syncUI(with: effects)
-        speakCommit(kind: .returnKey, keyLabel: "回车", committedText: nil, sequence: speechSequence)
+        if !controller.isResponsiveRimePipelineEnabled {
+            deliverDeferredKeySpeechIfNeeded(timing: .afterUISync)
+        }
     }
 }

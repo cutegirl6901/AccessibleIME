@@ -277,6 +277,50 @@ class KeyboardViewController: UIInputViewController {
     /// 上一次播报过的上屏文本。与候选去重分开，避免上屏写入后
     /// 把「同一候选再次出现」误判为重复而不播报。
     var lastAnnouncedCommittedText: String?
+    /// 等待异步快照落地的按键播报。
+    ///
+    /// ## 为什么需要它
+    ///
+    /// 键盘在 `isResponsiveRimePipelineEnabled == true` 时走异步引擎：
+    /// `controller.handle(.insertKey)` 只是把键入队后立即返回，
+    /// 此时 `state.lastRimeOutput` 仍是**上一次**的值（首次则是 nil）。
+    ///
+    /// 若在这一刻同步拍快照播报，读到的是旧候选——真机表现就是
+    /// 「不管输入什么，都重复朗读上一次的候选」。
+    ///
+    /// 因此把播报拆成两步：
+    /// 1. 按键时只**登记**（`beginDeferredKeySpeech`）；
+    /// 2. 引擎快照真正落地后（`onResponsivePresentationNeeded`）再拍快照播报。
+    ///
+    /// 兜底：超过 `deferredKeySpeechTimeout` 仍未等到快照，就用当前状态照发，
+    /// 宁可落后一帧，也不能静默。
+    struct DeferredKeySpeech {
+        let sequence: UInt64
+        let kind: KeySpeechKind
+        let keyLabel: String
+        let committedOverride: String?
+        let deletedOverride: String?
+        /// 登记时看到的组合修订号；用于判断快照是否已经前进。
+        let revisionAtRegistration: UInt64
+    }
+
+    /// 等待中的按键播报。同一时刻只保留最新一条：用户已按下下一个键时，
+    /// 上一条的内容已经过期。真正的丢弃判定由 `KeySpeechAnnouncer`
+    /// 里的序号比较负责。
+    var deferredKeySpeech: DeferredKeySpeech?
+    /// 兜底超时任务，与 deferredKeySpeech 分开存放：
+    /// struct 是值类型，Task 存在里面赋值后会拷贝。
+    var deferredKeySpeechTimeoutTask: Task<Void, Never>?
+
+    /// 兜底超时。取一个「用户能感知到卡顿」的保守值，
+    /// 正常异步往返远小于它。
+    static let deferredKeySpeechTimeout: Duration = .milliseconds(300)
+
+    /// 诊断：统计登记/落地/超时的次数，便于判断链路走的是哪条分支。
+    var deferredKeySpeechRegisteredCount = 0
+    var deferredKeySpeechDeliveredCount = 0
+    var deferredKeySpeechTimedOutCount = 0
+
     /// 等按键播报接手的上屏播报。
     ///
     /// `onCommittedText` 在 `controller.handle(...)` 内部触发，早于按键播报，

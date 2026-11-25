@@ -1,4 +1,4 @@
-import KeyboardCore
+﻿import KeyboardCore
 import UIKit
 
 extension KeyboardViewController {
@@ -78,12 +78,20 @@ extension KeyboardViewController {
         // 推进按键序号；播报归属据此判定，过期的直接丢弃。
         let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertKey(key))
-        // 旁白公告在候选栏刷新之前投递：0.2.5 记录过与 reloadData 同帧的公告
-        // 会被系统丢弃。播报内容来自 controller.state 的值快照，不依赖视图。
-        // 其余通道（依赖候选格身份）一律在 syncUI 之后。
-        let channelTiming = keySpeechAnnouncer.channel.timing
-        if channelTiming == .beforeUISync {
-            speakInsertKey(key, sequence: speechSequence)
+        // 只登记，不立即播报：异步引擎下 handle() 已经返回，但快照还没落地，
+        // 此刻的 lastRimeOutput 是上一次的值。真正的读取在
+        // onResponsivePresentationNeeded 里完成（见 beginDeferredKeySpeech 的注释）。
+        // 届时仍按通道的 timing 分两次投递：公告在 syncUI 之前（与 reloadData
+        // 同帧的公告会被系统丢弃，见 0.2.5 记录），焦点转移在其后。
+        beginDeferredKeySpeech(
+            kind: KeySpeechComposer.classify(key: key),
+            keyLabel: key,
+            sequence: speechSequence
+        )
+        // 非异步路径（responsive 管线关闭）下 handle() 已同步更新状态，
+        // 无需等待快照回调，立刻发声以免白白多等一个超时。
+        if !controller.isResponsiveRimePipelineEnabled {
+            deliverDeferredKeySpeechIfNeeded(timing: .beforeUISync)
         }
 
         #if DEBUG
@@ -142,9 +150,12 @@ extension KeyboardViewController {
 
         let uiStartTime = CACurrentMediaTime()
         syncUI(with: effects)
-        // 依赖候选格身份的诊断通道在候选栏刷新完成后投递。
-        if channelTiming == .afterUISync {
-            speakInsertKey(key, sequence: speechSequence)
+        // 非异步路径：syncUI 之后候选格已就绪，
+        // 焦点转移通道（afterUISync）在这里投递。
+        // 异步路径：快照由 onResponsivePresentationNeeded 统一处理，
+        // 不在这里重复投递。
+        if !controller.isResponsiveRimePipelineEnabled {
+            deliverDeferredKeySpeechIfNeeded(timing: .afterUISync)
         }
         let endTime = CACurrentMediaTime()
         let uiMs = (endTime - uiStartTime) * 1000
