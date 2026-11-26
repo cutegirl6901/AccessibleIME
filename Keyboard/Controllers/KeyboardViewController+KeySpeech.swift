@@ -118,6 +118,21 @@ extension KeyboardViewController {
         deferredKeySpeech = nil
         deferredKeySpeechTimeoutTask?.cancel()
 
+        // 自助诊断：把这几个数字拼成一句话，供三击大小写键朗读。
+        // 判断方法：revAtRegister 与 revNow 不同 = 快照前进了（读到新数据）；
+        // 相同 = 引擎没更新，问题在 RIME 侧。
+        // 再比较 engineCandidates 与 barCandidates：两者不等说明播报和候选栏
+        // 读的不是同一份数据。
+        let engineCount = controller.state.lastRimeOutput?.candidates.count ?? -1
+        let barCount = accumulatedCandidates.count
+        lastSpeechDiagnostic =
+            "通道\(keySpeechAnnouncer.channel.id.rawValue)，"
+            + "取数\(reason)，"
+            + "修订\(pending.revisionAtRegistration)到\(controller.state.compositionRevision)，"
+            + "引擎候选\(engineCount)个，"
+            + "候选栏\(barCount)个，"
+            + "播报字数\(text?.count ?? -1)"
+
         // 真机探针：系统日志可用数据线直接读取，绕开 App Group 隔离。
         // 只记录结构性信息（长度/数量/通道），不记录候选文字本身。
         ProbeLog.log("FLUSH", [

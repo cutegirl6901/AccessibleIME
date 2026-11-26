@@ -312,6 +312,14 @@ class KeyboardViewController: UIInputViewController {
     /// struct 是值类型，Task 存在里面赋值后会拷贝。
     var deferredKeySpeechTimeoutTask: Task<Void, Never>?
 
+    /// 上一次按键播报的自助诊断摘要。
+    ///
+    /// 用途：真机上没有数据线、没有 App Group，唯一能确认「到底发生了什么」
+    /// 的方式就是让键盘自己把它念出来。三击大小写键时朗读这段文字。
+    ///
+    /// 只保留最近一次，够判断「读到的是新数据还是旧数据」。
+    var lastSpeechDiagnostic: String?
+
     /// 兜底超时。取一个「用户能感知到卡顿」的保守值，
     /// 正常异步往返远小于它。
     static let deferredKeySpeechTimeout: Duration = .milliseconds(300)

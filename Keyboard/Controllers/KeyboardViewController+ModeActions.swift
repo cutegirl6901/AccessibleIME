@@ -43,11 +43,31 @@ extension KeyboardViewController {
         return true
     }
 
-    /// 切到下一条通道。通道会朗读自己的名字（听不到名字即为该通道静默）。
+    /// 三击大小写键：先朗读上一次按键的自助诊断，再切到下一条通道并朗读其名称。
+    ///
+    /// 为什么把诊断挂在这个手势上：
+    /// 真机上既没有数据线工具，又没有 App Group 可以在主 App 里查看，
+    /// 唯一可靠的信息出口就是键盘自己的语音。
+    ///
+    /// 听到的内容按这个顺序：
+    ///   1. 「诊断：通道三，取数 snapshot，修订 12 到 12，引擎候选 0 个，候选栏 1 个，播报字数 5」
+    ///   2. 「通道四，旁白焦点转移」
+    ///
+    /// 读法：
+    ///   - 修订 12 到 12（两个数相同）→ 引擎没更新，播报读的是旧数据
+    ///   - 修订 12 到 17（不同）→ 快照确实前进了
+    ///   - 引擎候选 0 / 候选栏 1 → 播报和候选栏不同源（正是当前疑点）
+    ///   - 完全听不到第 1 句 → 说明这条语音路径本身不通
     func cycleSpeechChannel() {
+        // 先念诊断，用切换前的通道，这样能如实反映刚才那次按键走的是哪条路。
+        if let diagnostic = lastSpeechDiagnostic {
+            keySpeechAnnouncer.channel.speak("诊断：" + diagnostic)
+        } else {
+            keySpeechAnnouncer.channel.speak("诊断：还没有按键记录")
+        }
+
         let next = keySpeechAnnouncer.cycleChannel()
         installSpeechChannelCallbacks(next)
-        // 记住选择，键盘下次出现时仍是这条通道，便于反复对比。
         UserDefaults.standard.set(next.id.rawValue, forKey: Self.keySpeechChannelKey)
         ProbeLog.log("CHANNEL", [
             ("now", String(describing: next.id)),
