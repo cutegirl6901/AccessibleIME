@@ -25,7 +25,9 @@ concurrency:
 jobs:
   build-ipa:
     name: 构建未签名 IPA
-    runs-on: macos-26
+    # 临时改用 x86_64 池：macos-26(arm64) 近期频繁排队超时（多次 15-20 分钟未分配）。
+    # 编译 iOS 产物与宿主架构无关，x86_64 完全可用；恢复容量后改回 macos-26。
+    runs-on: macos-latest
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
