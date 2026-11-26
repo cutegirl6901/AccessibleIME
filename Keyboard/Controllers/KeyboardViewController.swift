@@ -327,6 +327,11 @@ class KeyboardViewController: UIInputViewController {
     /// 所以不能立刻投递，也不能立刻丢弃；先登记，
     /// 由本次按键的播报撤销，或由兜底路径补发。
     var pendingCommittedAnnouncement: (committedText: String, spoken: String)?
+    /// 上屏播报的兜底任务句柄。
+    ///
+    /// 必须持有才能在「键盘收起」时取消：否则它在键盘不可见期间醒来，
+    /// 会把上一轮的旧文本投递出去，表现为「收起再展开后第一下读到上次的字」。
+    var pendingCommittedAnnouncementTask: Task<Void, Never>?
     var accumulatedCandidates: [CandidateItem] {
         get { candidatePresentationStore.page.items }
         set { candidatePresentationStore.page.items = newValue }

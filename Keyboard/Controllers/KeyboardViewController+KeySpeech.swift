@@ -219,8 +219,25 @@ extension KeyboardViewController {
     ) -> KeySpeechSnapshot {
         let state = controller.state
         let output = state.lastRimeOutput
-        let candidates = output?.candidates.map(\.text) ?? []
-        let comments = output?.candidates.map(\.comment) ?? []
+
+        // 候选来源：优先用候选栏**已经显示**的数据。
+        //
+        // 真机结论：同一时刻摸候选区能读对，而按键播报读错，
+        // 说明两者读的不是同一份数据。候选栏是用户能验证的「真相」，
+        // 因此以它为准；只有候选栏尚未刷新（修订号落后）时才回退到引擎输出。
+        let barMatchesCurrentState =
+            !accumulatedCandidates.isEmpty
+            && candidateSnapshotCompositionRevision == state.compositionRevision
+
+        let candidates: [String]
+        let comments: [String?]
+        if barMatchesCurrentState {
+            candidates = accumulatedCandidates.map(\.title)
+            comments = accumulatedCandidates.map(\.comment)
+        } else {
+            candidates = output?.candidates.map(\.text) ?? []
+            comments = output?.candidates.map(\.comment) ?? []
+        }
 
         return KeySpeechSnapshot(
             kind: kind,
@@ -337,7 +354,14 @@ extension KeyboardViewController {
         deferredKeySpeechTimeoutTask?.cancel()
         deferredKeySpeech = nil
         // 未投递的上屏播报也一并丢弃：键盘已经收起，迟到的朗读只会造成困惑。
+        // 必须同时取消兜底任务，否则它会在下次展开键盘后醒来并播报旧文本。
+        pendingCommittedAnnouncementTask?.cancel()
+        pendingCommittedAnnouncementTask = nil
         pendingCommittedAnnouncement = nil
+        // 去重基准也要清：不清的话，下次真的输入同一个字会被判成「重复」
+        // 而只读词本身，读法与首次不一致。
+        lastAnnouncedCommittedText = nil
+        lastFocusedCandidateText = nil
     }
 
     static let keySpeechDetailKey = "key_speech_detail"

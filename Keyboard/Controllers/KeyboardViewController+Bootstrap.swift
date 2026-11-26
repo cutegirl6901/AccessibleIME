@@ -209,6 +209,14 @@ extension KeyboardViewController {
         if isReturningToExistingKeyboard {
             // 首次显示沿用 viewDidLoad 刚生成的快照；只有真正返回时才重新读取共享设置。
             refreshCachedSettings(source: "viewDidAppear")
+            // 必须在这里清播报状态。
+            //
+            // UIKit 不保证 viewWillDisappear 被调用（见 observeExtensionHostLifecycle
+            // 的注释），因此 resetKeySpeech 可能从未执行，于是：
+            //   - pendingCommittedAnnouncement 留上一轮的文本
+            //   - pendingCommittedAnnouncementTask 还活着
+            // 结果：重新展开键盘后的输入读的是上一轮的字（真机表现）。
+            resetKeySpeech()
             let effects = cleanupTransientKeyboardState(
                 reason: "viewDidAppear",
                 abandonsComposition: true

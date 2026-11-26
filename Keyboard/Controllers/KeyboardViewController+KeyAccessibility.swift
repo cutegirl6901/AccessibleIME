@@ -8,10 +8,12 @@ extension KeyboardViewController {
         // image-only function keys can lose the default AX element flag.
         // The UI harness queries `XCUIElementTypeKey` via `.keyboardKey`.
         button.isAccessibilityElement = true
-        // 必须与 .button 合并：直接赋值 .keyboardKey 会把 UIButton 默认的
-        // .button 语义覆盖掉，部分系统版本上「轻点两下激活」会失效。
-        // 系统键盘的键同样同时具备这两种 trait。
-        button.accessibilityTraits = [.keyboardKey, .button]
+        // 只给 .keyboardKey，不要加 .button。
+        //
+        // 真机回归（0.2.19）：加上 .button 后旁白把按键当普通按钮，
+        // 必须「双击」才能上屏；系统键盘的字符键是抬手即插入。
+        // 旁白对 .keyboardKey 的默认激活方式是单击。
+        button.accessibilityTraits = .keyboardKey
         button.accessibilityHint = nil
         button.accessibilityValue = nil
 

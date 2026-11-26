@@ -282,12 +282,21 @@ extension KeyboardViewController {
         }
 
         pendingCommittedAnnouncement = (committedText: event.text, spoken: spoken)
-        // 兜底：本次按键没有走到 speakCommit 时（引擎内部提交等），
-        // 下一个主线程循环把这条补发出去。
-        // 用 Task 而不是 DispatchQueue：在 Swift 6 下天然继承 MainActor 隔离，
-        // 与 KeySpeechAnnouncer 里的异步兜底写法保持一致。
-        Task { @MainActor [weak self] in
-            self?.flushPendingCommittedAnnouncementIfNeeded()
+        // 兜底延时放宽到比按键播报更长。
+        //
+        // 真机现象（0.2.19）：原先「下一个主线程循环就补发」会抢在延迟播报
+        // 之前执行。而延迟播报要等引擎快照落地（最长 300ms），
+        // 于是听到的永远是这条兜底的旧内容（「我们的我」），
+        // 按键播报反而被它覆盖。
+        //
+        // 另外必须保存句柄：键盘收起后这条 Task 若还活着，
+        // 会在下次展开键盘时把上一轮的旧文本补发出来
+        // （真机表现为「收起再展开后第一下读的是上次的字」）。
+        pendingCommittedAnnouncementTask?.cancel()
+        pendingCommittedAnnouncementTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, let self else { return }
+            self.flushPendingCommittedAnnouncementIfNeeded()
         }
     }
 
