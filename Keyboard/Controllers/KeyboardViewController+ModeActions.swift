@@ -49,6 +49,10 @@ extension KeyboardViewController {
         installSpeechChannelCallbacks(next)
         // 记住选择，键盘下次出现时仍是这条通道，便于反复对比。
         UserDefaults.standard.set(next.id.rawValue, forKey: Self.keySpeechChannelKey)
+        ProbeLog.log("CHANNEL", [
+            ("now", String(describing: next.id)),
+            ("spokenName", next.id.spokenName),
+        ])
     }
 
     /// 通道 4 需要控制器提供候选格。

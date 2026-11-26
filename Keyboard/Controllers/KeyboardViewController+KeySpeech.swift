@@ -59,6 +59,13 @@ extension KeyboardViewController {
             revisionAtRegistration: controller.state.compositionRevision
         )
         deferredKeySpeechRegisteredCount += 1
+        ProbeLog.log("REGISTER", [
+            ("seq", String(sequence)),
+            ("kind", String(describing: kind)),
+            ("key", keyLabel),
+            ("rev", String(controller.state.compositionRevision)),
+            ("pipeline", controller.isResponsiveRimePipelineEnabled ? "async" : "sync"),
+        ])
         scheduleDeferredKeySpeechTimeout(sequence: sequence)
     }
 
@@ -110,6 +117,24 @@ extension KeyboardViewController {
         }
         deferredKeySpeech = nil
         deferredKeySpeechTimeoutTask?.cancel()
+
+        // 真机探针：系统日志可用数据线直接读取，绕开 App Group 隔离。
+        // 只记录结构性信息（长度/数量/通道），不记录候选文字本身。
+        ProbeLog.log("FLUSH", [
+            ("reason", reason),
+            ("seq", String(pending.sequence)),
+            ("kind", String(describing: pending.kind)),
+            ("key", pending.keyLabel),
+            ("revAtRegister", String(pending.revisionAtRegistration)),
+            ("revNow", String(controller.state.compositionRevision)),
+            ("rawLen", String(controller.state.lastRimeOutput?.rawInput?.count ?? -1)),
+            ("engineCandidates", String(controller.state.lastRimeOutput?.candidates.count ?? -1)),
+            ("barCandidates", String(accumulatedCandidates.count)),
+            ("barRevision", String(candidateSnapshotCompositionRevision)),
+            ("channel", String(describing: keySpeechAnnouncer.channel.id)),
+            ("delivered", String(deferredKeySpeechDeliveredCount)),
+            ("timedOut", String(deferredKeySpeechTimedOutCount)),
+        ])
 
         // 诊断日志走运行时开关（Logger 的 logging_enabled），不受 #if DEBUG 限制。
         // 这样 Release 构建在真机上也能看到按键这一刻读到的到底是新值还是旧值。
@@ -177,6 +202,14 @@ extension KeyboardViewController {
             table: CharacterDescriptionTableProvider.shared.table,
             includeKeyName: includeKeyName
         )
+        // 真机探针：这是最终交给旁白的文本，直接对应你能听到的内容。
+        ProbeLog.log("SPEAK", [
+            ("seq", String(sequence)),
+            ("chars", String(text?.count ?? -1)),
+            ("text", text ?? "<nil>"),
+            ("channel", String(describing: keySpeechAnnouncer.channel.id)),
+        ])
+
         // 一次按键一条播报：不合并、不防抖。
         let outcome = keySpeechAnnouncer.announce(text, sequence: sequence)
         // 只要这次按键确实产生了一条播报（立即投递，或排队模式下已入队），

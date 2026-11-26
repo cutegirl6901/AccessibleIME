@@ -304,6 +304,10 @@ extension KeyboardViewController {
     func flushPendingCommittedAnnouncementIfNeeded() {
         guard let pending = pendingCommittedAnnouncement else { return }
         pendingCommittedAnnouncement = nil
+        ProbeLog.log("COMMITTED_FALLBACK", [
+            ("spoken", pending.spoken),
+            ("channel", String(describing: keySpeechAnnouncer.channel.id)),
+        ])
         // 键盘已经收起时不要再发声：用户此时在别的界面，
         // 一句迟到的候选朗读只会造成困惑。
         guard viewIfLoaded?.window != nil else { return }
@@ -313,6 +317,14 @@ extension KeyboardViewController {
     private func postCommittedAnnouncement(_ spoken: String, committedText: String) {
         candidateAnnouncementSequence &+= 1
         lastAnnouncedCommittedText = committedText
+        // 真机探针：这是与 6 个通道完全独立的第二条播报路径。
+        // 若它先于按键播报发声，听感上会盖掉通道差异。
+        ProbeLog.log("COMMITTED", [
+            ("spoken", spoken),
+            ("committed", committedText),
+            ("seq", String(candidateAnnouncementSequence)),
+            ("channel", String(describing: keySpeechAnnouncer.channel.id)),
+        ])
         AccessibilityAnnouncement.postQueued(spoken)
     }
 

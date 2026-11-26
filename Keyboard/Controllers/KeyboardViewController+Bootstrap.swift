@@ -217,6 +217,11 @@ extension KeyboardViewController {
             //   - pendingCommittedAnnouncementTask 还活着
             // 结果：重新展开键盘后的输入读的是上一轮的字（真机表现）。
             resetKeySpeech()
+            ProbeLog.log("APPEAR_RESET", [
+                ("engineCandidatesAfterClean", String(controller.state.lastRimeOutput?.candidates.count ?? -1)),
+                ("barCandidatesAfterClean", String(accumulatedCandidates.count)),
+                ("channel", String(describing: keySpeechAnnouncer.channel.id)),
+            ])
             let effects = cleanupTransientKeyboardState(
                 reason: "viewDidAppear",
                 abandonsComposition: true
