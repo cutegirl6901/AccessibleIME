@@ -388,7 +388,20 @@ extension KeyboardViewController {
             } else {
                 deleted = deletedSuffix(before: before, after: after)
             }
-            speakDelete(deletedText: deleted, sequence: speechSequence)
+            // 走延迟播报：与字符键统一路径，
+            // 保证通道的 timing（before/after syncUI）都能正确投递。
+            beginDeferredKeySpeech(
+                kind: .delete,
+                keyLabel: "删除",
+                sequence: speechSequence,
+                deletedOverride: deleted
+            )
+            // 注意：syncUI 已在上面（第 365 行）执行完毕，
+            // 因此这里只能投递 afterUISync 时机的通道。
+            // 投 beforeUISync 会永远匹配不到（该时机早已过去），整条播报静默。
+            if !controller.isResponsiveRimePipelineEnabled {
+                deliverDeferredKeySpeechIfNeeded(timing: .afterUISync)
+            }
         }
         return observed
     }
