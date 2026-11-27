@@ -32,6 +32,8 @@ extension KeyboardViewController {
             // Restoring the key appearance removes the default pressed state color
             restoreKeyAppearance(spaceButton)
             emitFeedback(for: .modeEnter)
+            // 顺手启动诊断定时器：继续按住到 3 秒就朗读诊断。
+            scheduleSpaceDiagnostic()
 
         case .changed:
             guard let lastX = spaceCursorLastLocationX else { return }
@@ -41,6 +43,8 @@ extension KeyboardViewController {
             let offset = Int(diff / 10)
 
             if offset != 0 {
+                // 手指真的在拖动 = 在移动光标，不是在等诊断。
+                cancelSpaceDiagnostic()
                 commitTrace.close(.nextInput)
                 textDocumentProxy.adjustTextPosition(byCharacterOffset: offset)
                 // Compensate the last location by the exact movement distance we just applied
@@ -48,6 +52,7 @@ extension KeyboardViewController {
             }
 
         case .ended, .cancelled:
+            cancelSpaceDiagnostic()
             isCursorMovementModeActive = false
             spaceCursorLastLocationX = nil
             setCursorMovementModeUI(active: false, exceptionView: spaceButton)
@@ -56,6 +61,38 @@ extension KeyboardViewController {
         default:
             break
         }
+    }
+
+    /// 启动「按住空格 3 秒朗读诊断」。
+    func scheduleSpaceDiagnostic() {
+        cancelSpaceDiagnostic()
+        spaceDiagnosticTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.spaceDiagnosticHoldDuration,
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.speakSpaceDiagnostic()
+            }
+        }
+    }
+
+    func cancelSpaceDiagnostic() {
+        spaceDiagnosticTimer?.invalidate()
+        spaceDiagnosticTimer = nil
+    }
+
+    /// 朗读自助诊断。
+    ///
+    /// 走当前通道发声：这一句能不能听到，本身就说明该通道是否可用。
+    func speakSpaceDiagnostic() {
+        let message: String
+        if let diagnostic = lastSpeechDiagnostic {
+            message = "诊断：" + diagnostic
+        } else {
+            message = "诊断：还没有按键记录。请先输入几个字母，再按住空格三秒。"
+        }
+        keySpeechAnnouncer.channel.speak(message)
+        ProbeLog.log("DIAG_HOLD", [("message", message)])
     }
 
     func endSpaceCursorMovementForHeightAdjustment() {

@@ -320,6 +320,20 @@ class KeyboardViewController: UIInputViewController {
     /// 只保留最近一次，够判断「读到的是新数据还是旧数据」。
     var lastSpeechDiagnostic: String?
 
+    /// 长按空格键触发诊断朗读的定时器。
+    ///
+    /// 为什么用长按空格而不是三击大小写键：
+    /// 开着旁白时三击很难命中，而空格键面积最大、长按最容易做。
+    /// 空格原本的长按（0.5 秒）用于移动光标，因此诊断设在更长的
+    /// holdDuration 之后，两者不冲突。
+    var spaceDiagnosticTimer: Timer?
+
+    /// 诊断需要按住多久。
+    ///
+    /// 取得比光标模式（0.5 秒）长得多，避免误触；
+    /// 也不至于长到用户以为没反应。
+    static let spaceDiagnosticHoldDuration: TimeInterval = 3.0
+
     /// 兜底超时。取一个「用户能感知到卡顿」的保守值，
     /// 正常异步往返远小于它。
     static let deferredKeySpeechTimeout: Duration = .milliseconds(300)
