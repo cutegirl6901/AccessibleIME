@@ -32,9 +32,12 @@ public enum ProbeLog {
 
     private static let logger = os.Logger(subsystem: subsystem, category: "keyboard")
 
-    /// 开关：由键盘自己的标准存储控制，主 App 无法写入（容器隔离）。
-    /// 默认开启，因为当前阶段排查优先；验证结束后可改为 false 减少日志量。
-    public static var isEnabled = true
+    /// 开关：默认开启，排查阶段优先。
+    ///
+    /// 用 `let` 而不是 `var`：Swift 6 严格并发不允许可变的非隔离全局状态
+    /// （`static property 'isEnabled' is not concurrency-safe`）。
+    /// 本阶段不需要运行时切换，验证结束后若要关闭，改这里的字面量即可。
+    public static let isEnabled = true
 
     /// 写一条探针日志。
     ///
