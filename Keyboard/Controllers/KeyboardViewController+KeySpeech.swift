@@ -387,11 +387,40 @@ extension KeyboardViewController {
         keySpeechAnnouncer.deliveryMode =
             KeySpeechAnnouncer.DeliveryMode(rawValue: modeRaw) ?? .immediate
 
-        // 播报通道。默认 3（旁白公告，低优先级排队）：
-        // 旁白先念键名，候选排在其后播出，不抢话、不移动焦点。
-        // 存的是通道编号；解析失败一律回到默认值，不要静默切到别的通道。
+        // 播报通道。
+        //
+        // 默认改为 2（键盘自己用 AVSpeechSynthesizer 发声）。
+        //
+        // 为什么不再用通道 3（旁白公告）：
+        // 真机反复确认——`UIAccessibility.post(.announcement)` 在键盘扩展里
+        // 只在键盘刚出现时生效一次，之后系统静默丢弃。
+        // 观察到的现象与此完全一致：「切到别的 App 再切回来，第一个字符能读对，
+        // 之后所有按键都无声」。0.2.2–0.2.10 的历史记录也是同一结论
+        //（「时有时无，后期完全听不到」）。
+        //
+        // 键盘自己发声不经过旁白队列，因此不受该限制；代价是需要自己念键名，
+        // 已由 `includesKeyName = true` 处理。
+        let storedChannel = value(for: Self.keySpeechChannelKey) as? Int
+
+        // 一次性迁移：把旧的「旁白公告」通道强制切到应用语音。
+        //
+        // 原因：通道 3 在键盘扩展里只在键盘出现时生效一次，之后系统静默丢弃，
+        // 真机表现为「第一个字符能读、之后全无声」。用户设备上很可能已存过 3，
+        // 只改默认值不会生效。用独立标记确保只迁移一次，
+        // 之后用户仍可在主 App 里自由改回其它通道。
+        let migrationKey = "key_speech_channel_migrated_from_announcement"
+        if !UserDefaults.standard.bool(forKey: migrationKey) {
+            UserDefaults.standard.set(true, forKey: migrationKey)
+            if storedChannel == KeySpeechChannelID.queuedAnnouncement.rawValue {
+                UserDefaults.standard.set(
+                    KeySpeechChannelID.appVoicePlayback.rawValue,
+                    forKey: Self.keySpeechChannelKey
+                )
+            }
+        }
+
         let channelNumber = value(for: Self.keySpeechChannelKey) as? Int
-        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .queuedAnnouncement
+        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .appVoicePlayback
         if keySpeechAnnouncer.channel.id != channelID {
             keySpeechAnnouncer.selectChannel(channelID, announceName: false)
         }
