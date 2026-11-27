@@ -68,37 +68,6 @@ extension KeyboardViewController {
         }
     }
 
-    /// 把候选写进刚按下的字符键的 `accessibilityValue`，并让旁白重读该键。
-    ///
-    /// ## 为什么这样做（对照系统输入法）
-    ///
-    /// 系统键盘的 `TextInputUI` 二进制里 `UIAccessibilityPostNotification`
-    /// 出现 0 次——它从不"播报"，而是：
-    ///   1. 按键元素自带 `accessibilityLabel`（键名）
-    ///   2. 按下后把候选写进该元素的 `accessibilityValue`
-    ///   3. 用 `.layoutChanged` 让旁白重新读这个元素
-    /// 旁白于是读出「n，你」。
-    ///
-    /// 本项目已确认无障碍树是通的（用户滑过按键能读出字母名），
-    /// 缺的正是第 2、3 步。
-    ///
-    /// - Parameter text: 要朗读的候选文本（已由上层按详细程度生成）。
-    func refreshTouchedKeyAccessibilityValue(with text: String) {
-        guard let key = lastTouchedCharacterKey else { return }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        key.accessibilityValue = trimmed
-
-        // 下一轮主循环再做 layoutChanged：
-        // 让 UIKit 先提交本帧布局，旁白才能定位到元素。
-        // 直接同步调用在候选栏刚刷新时可能指向旧的树。
-        DispatchQueue.main.async { [weak key] in
-            guard let key, key.window != nil else { return }
-            UIAccessibility.post(notification: .layoutChanged, argument: key)
-        }
-    }
-
     @objc private func refreshShiftAccessibilityValue(_ sender: UIButton) {
         sender.accessibilityValue = shiftAccessibilityValue
     }

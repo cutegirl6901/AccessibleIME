@@ -320,16 +320,6 @@ class KeyboardViewController: UIInputViewController {
     /// 只保留最近一次，够判断「读到的是新数据还是旧数据」。
     var lastSpeechDiagnostic: String?
 
-    /// 最近一次通过触摸按下的字符键。
-    ///
-    /// 用途：按键后把「当前首候选」写进这个键的 `accessibilityValue`，
-    /// 再用 `.layoutChanged` 指回它，旁白就会读出「键名 + 候选」。
-    ///
-    /// 这是系统键盘的做法：`TextInputUI` 二进制里完全不使用
-    /// `UIAccessibilityPostNotification(.announcement)`，
-    /// 而是靠元素自身的 value 变化配合布局通知。
-    weak var lastTouchedCharacterKey: UIButton?
-
     /// 诊断专用的发声器缓存（不参与通道切换，保证诊断一定能出声）。
     var cachedDiagnosticChannel: (any KeySpeechChannel)?
 

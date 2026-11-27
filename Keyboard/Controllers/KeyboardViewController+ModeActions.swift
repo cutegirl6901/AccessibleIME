@@ -85,11 +85,6 @@ extension KeyboardViewController {
                 self?.focusFirstCandidateAfterKeypress()
             }
         }
-        if let keyValue = channel as? KeyValueRefreshSpeechChannel {
-            keyValue.refreshKeyValue = { [weak self] text in
-                self?.refreshTouchedKeyAccessibilityValue(with: text)
-            }
-        }
     }
 
     /// 三击判定窗口。比双击大写（0.35 秒）宽，因为三击更慢。

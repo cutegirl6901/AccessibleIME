@@ -18,8 +18,6 @@ extension KeyboardViewController {
                 ?? ""
         }
         guard !key.isEmpty else { return }
-        // 记住这次触摸的是哪个键：播报时要把候选写进它的 accessibilityValue。
-        lastTouchedCharacterKey = sender
         #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
             let wakeAttempt = KeyboardWakeOwnerProbe.shared.beginAttempt(appearanceOrdinal: wakeProbeAppearanceOrdinal)
             recordWakeOwnerProbe(.insertBegin)

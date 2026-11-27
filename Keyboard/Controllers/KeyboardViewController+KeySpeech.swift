@@ -418,7 +418,6 @@ extension KeyboardViewController {
             //   1/2 键盘自发声 → 完全无声
             //   3   旁白公告   → **唯一能出声**，但原先读的是旧候选
             //   4   焦点转移   → 无声
-            //   7   按键值刷新 → 无声
             // 全部收敛到 3。原先「读旧候选」的问题已通过把它的
             // 投递时机从 beforeUISync 改为 afterUISync 修掉。
             if storedChannel != nil,
