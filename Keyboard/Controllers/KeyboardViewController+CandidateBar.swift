@@ -221,10 +221,17 @@ extension KeyboardViewController {
             lastFocusedCandidateText = nil
             return
         }
-        guard let output = controller.state.lastRimeOutput,
-            let first = output.candidates.first,
-            !first.text.isEmpty
-        else {
+        // 候选文字优先取候选栏已显示的内容：
+        // 异步引擎下 state.lastRimeOutput 可能是上一轮的值，
+        // 而候选栏是用户能验证的真相。
+        // 焦点转移本身就依赖候选格，因此两者必须同源。
+        let firstText: String?
+        if !accumulatedCandidates.isEmpty {
+            firstText = accumulatedCandidates.first?.title
+        } else {
+            firstText = controller.state.lastRimeOutput?.candidates.first?.text
+        }
+        guard let firstText, !firstText.isEmpty else {
             lastFocusedCandidateText = nil
             return
         }
@@ -233,7 +240,7 @@ extension KeyboardViewController {
         guard !shouldBlockT9RecoveryPresentation else { return }
         // 不去重：候选字相同也必须再读一次。
         // 盲人用户无法区分「没读到」和「没按上」，静默比重复更有害。
-        lastFocusedCandidateText = first.text
+        lastFocusedCandidateText = firstText
         candidateAnnouncementSequence &+= 1
         let sequence = candidateAnnouncementSequence
 

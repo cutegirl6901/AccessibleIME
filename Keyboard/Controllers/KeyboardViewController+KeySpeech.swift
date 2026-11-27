@@ -408,19 +408,27 @@ extension KeyboardViewController {
         // 真机表现为「第一个字符能读、之后全无声」。用户设备上很可能已存过 3，
         // 只改默认值不会生效。用独立标记确保只迁移一次，
         // 之后用户仍可在主 App 里自由改回其它通道。
-        let migrationKey = "key_speech_channel_migrated_from_announcement"
+        let migrationKey = "key_speech_channel_migrated_to_focus_transfer"
         if !UserDefaults.standard.bool(forKey: migrationKey) {
             UserDefaults.standard.set(true, forKey: migrationKey)
-            if storedChannel == KeySpeechChannelID.queuedAnnouncement.rawValue {
+            // 3（旁白公告）只在键盘刚出现时生效一次；
+            // 1/2（键盘自发声）在本扩展里完全听不到，已被真机证伪。
+            // 全部收敛到 4（焦点转移）——项目里唯一有真机成功记录的路径。
+            let unusable: Set<Int> = [
+                KeySpeechChannelID.appVoiceIsolated.rawValue,
+                KeySpeechChannelID.appVoicePlayback.rawValue,
+                KeySpeechChannelID.queuedAnnouncement.rawValue,
+            ]
+            if let storedChannel, unusable.contains(storedChannel) {
                 UserDefaults.standard.set(
-                    KeySpeechChannelID.appVoicePlayback.rawValue,
+                    KeySpeechChannelID.focusTransfer.rawValue,
                     forKey: Self.keySpeechChannelKey
                 )
             }
         }
 
         let channelNumber = value(for: Self.keySpeechChannelKey) as? Int
-        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .appVoicePlayback
+        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .focusTransfer
         if keySpeechAnnouncer.channel.id != channelID {
             keySpeechAnnouncer.selectChannel(channelID, announceName: false)
         }
