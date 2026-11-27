@@ -277,22 +277,26 @@ extension KeyboardViewController {
         // 真机结论：同一时刻摸候选区能读对，而按键播报读错，
         // 说明两者读的不是同一份数据。候选栏是用户能验证的「真相」，
         // 因此以它为准；只有候选栏尚未刷新（修订号落后）时才回退到引擎输出。
-        // 只要候选栏有内容就用它。
+        // 候选来源：**优先引擎输出，候选栏只作兜底**。
         //
-        // 不再要求修订号严格相等：真机上二者经常不同步
-        // （候选栏的 revision 记录在刷新时写入，而 state 的 revision
-        // 在引擎应用时就已推进），严格比对会导致永远回退到引擎输出，
-        // 而引擎输出在异步路径下正是旧值——就是「永远读同一个字」的来源。
-        let barHasContent = !accumulatedCandidates.isEmpty
+        // 之前的写法是「候选栏有内容就用它」，但这有个致命缺陷：
+        // 候选栏可能仍是上一轮的残留（例如本轮还没刷新，或刷新失败），
+        // 于是每次都读到同一个旧值——正是真机上「永远读我们的我」的可能来源。
+        //
+        // 引擎输出（state.lastRimeOutput）在 afterUISync 时已经是
+        // 本次按键 applyRimeOutput 之后的新值，更可信。
+        // 只有引擎输出为空时才退回候选栏（例如 T9 预取场景）。
+        let engineCandidates = output?.candidates.map(\.text) ?? []
+        let engineComments = output?.candidates.map(\.comment) ?? []
 
         let candidates: [String]
         let comments: [String?]
-        if barHasContent {
+        if !engineCandidates.isEmpty {
+            candidates = engineCandidates
+            comments = engineComments
+        } else {
             candidates = accumulatedCandidates.map(\.title)
             comments = accumulatedCandidates.map(\.comment)
-        } else {
-            candidates = output?.candidates.map(\.text) ?? []
-            comments = output?.candidates.map(\.comment) ?? []
         }
 
         return KeySpeechSnapshot(

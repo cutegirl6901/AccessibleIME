@@ -212,17 +212,22 @@ public enum KeySpeechComposer {
 
         // 没有候选时的退路。
         //
-        // 键盘自己发声（includeKeyName = true）读「键名，拼音」，让用户知道自己打出什么；
-        // 走旁白公告（false）必须保持安静——旁白已经在念这个键，
-        // 再读一遍拼音串就是双重朗读。
+        // 真机需求（2026-11-27）：用户明确要求「每按一个键都要有反馈」，
+        // 不能因为暂时候选为空就静默。原先 `includeKeyName = false`
+        // 时这里直接 return nil，表现为按了键完全没有声音。
+        //
+        // 因此有拼音串就播报拼音串——用户至少知道自己打下去了什么。
+        // 这与「旁白已念过键名」并不冲突：拼音串是组字状态，键名是单字，
+        // 两者信息不同。
         if !snapshot.composition.isEmpty {
-            guard includeKeyName else { return nil }
-            guard !snapshot.keyLabel.isEmpty else { return snapshot.composition }
-            return "\(snapshot.keyLabel)，\(snapshot.composition)"
+            if includeKeyName, !snapshot.keyLabel.isEmpty {
+                return "\(snapshot.keyLabel)，\(snapshot.composition)"
+            }
+            return snapshot.composition
         }
 
-        // 走到这里说明既没有候选也没有拼音。
-        // 旁白通道保持安静：没有新信息，读键名只会和旁白重复。
+        // 既没有候选也没有拼音（例如刚切换页面）。
+        // 只有键盘自己发声时才补键名；旁白通道此时确实没有新信息。
         guard includeKeyName else { return nil }
         return snapshot.keyLabel.isEmpty ? nil : snapshot.keyLabel
     }
