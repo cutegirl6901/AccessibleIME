@@ -77,12 +77,13 @@ final class KeySpeechTests: XCTestCase {
         )
     }
 
-    func testAppVoiceChannelStaysSilentWithoutCandidates() {
-        // 应用语音通道只读候选。没有候选时读拼音串会与旁白的键名朗读重叠，
-        // 而且拼音不是「候选」，所以要安静。
+    func testQueuedChannelFallsBackToCompositionWithoutCandidates() {
+        // 真机需求（2026-11-27）：每按一个键都要有反馈，不能静默。
+        // 没有候选时读拼音串，让用户知道自己打出了什么。
         let s = snapshot(composition: "w", candidates: [])
-        XCTAssertNil(
-            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false)
+        XCTAssertEqual(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false),
+            "w"
         )
     }
 
@@ -92,6 +93,63 @@ final class KeySpeechTests: XCTestCase {
         XCTAssertNil(
             KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false)
         )
+    }
+
+    // MARK: 核心需求：有候选就读第一个候选
+
+    /// 用户明确要求：输入一个字符，如果候选有内容，就播报第一个候选。
+    func testAlwaysReadsFirstCandidateWhenAvailable() {
+        let s = snapshot(composition: "n", candidates: ["你", "呢", "尼"])
+        XCTAssertEqual(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false),
+            "你，你们的你"
+        )
+    }
+
+    /// 关键回归：不同输入必须读出不同结果。
+    ///
+    /// 真机上曾出现「不管输入什么，都读同一个字（我们的我）」。
+    /// 这条测试锁死「输入变化 → 输出变化」这一最基本性质。
+    func testDifferentInputsProduceDifferentSpeech() {
+        let cases: [(comp: String, cands: [String], expectedPrefix: String)] = [
+            ("n", ["你"], "你"),
+            ("ni", ["你好"], "你好"),
+            ("w", ["我"], "我"),
+            ("h", ["好"], "好"),
+        ]
+        var outputs: [String] = []
+        for c in cases {
+            let s = snapshot(composition: c.comp, candidates: c.cands)
+            let out = KeySpeechComposer.compose(
+                s, detail: .concise, table: table, includeKeyName: false
+            )
+            XCTAssertNotNil(out, "输入 \(c.comp) 应当有播报")
+            XCTAssertTrue(
+                out!.hasPrefix(c.expectedPrefix),
+                "输入 \(c.comp) 应读 \(c.expectedPrefix)，实际 \(out!)"
+            )
+            outputs.append(out!)
+        }
+        XCTAssertEqual(Set(outputs).count, cases.count, "不同输入不得产生相同播报")
+    }
+
+    /// 候选为空时必须退回拼音串，不能静默。
+    func testFallsBackToCompositionInsteadOfSilence() {
+        let s = snapshot(composition: "ni", candidates: [])
+        XCTAssertEqual(
+            KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false),
+            "ni"
+        )
+    }
+
+    /// 有候选时不应读拼音，必须读候选。
+    func testCandidateTakesPrecedenceOverComposition() {
+        let s = snapshot(composition: "wo", candidates: ["我"])
+        let out = KeySpeechComposer.compose(
+            s, detail: .concise, table: table, includeKeyName: false
+        )
+        XCTAssertEqual(out, "我")
+        XCTAssertFalse(out!.contains("wo"), "有候选时不应读出拼音串")
     }
 
     // MARK: 旁白通道：只补新信息，不重复键名
@@ -113,8 +171,8 @@ final class KeySpeechTests: XCTestCase {
         )
     }
 
-    func testQueuedChannelStaysSilentForBareDigit() {
-        // 旁白已经念过 "3"，没有候选就没有新信息。
+    func testQueuedChannelBareDigitWithoutCandidateIsSilent() {
+        // 数字键在无候选、无组合时确实没有新信息可读，保持安静。
         let s = snapshot(kind: .digit, keyLabel: "3")
         XCTAssertNil(
             KeySpeechComposer.compose(s, detail: .standard, table: table, includeKeyName: false)
