@@ -125,31 +125,35 @@ extension KeyboardViewController {
         // 读的不是同一份数据。
         let engineCount = controller.state.lastRimeOutput?.candidates.count ?? -1
         let barCount = accumulatedCandidates.count
-        lastSpeechDiagnostic =
-            "通道\(keySpeechAnnouncer.channel.id.rawValue)，"
-            + "取数\(reason)，"
-            + "修订\(pending.revisionAtRegistration)到\(controller.state.compositionRevision)，"
-            + "引擎候选\(engineCount)个，"
-            + "候选栏\(barCount)个，"
-            + "播报字数\(text?.count ?? -1)"
+        let channelNumber = keySpeechAnnouncer.channel.id.rawValue
+        let revisionBefore = pending.revisionAtRegistration
+        let revisionNow = controller.state.compositionRevision
+
+        // 逐段拼接：整条表达式一次性写会让类型检查超时。
+        var summary = "通道\(channelNumber)，"
+        summary += "取数\(reason)，"
+        summary += "修订\(revisionBefore)到\(revisionNow)，"
+        summary += "引擎候选\(engineCount)个，"
+        summary += "候选栏\(barCount)个"
+        lastSpeechDiagnostic = summary
 
         // 真机探针：系统日志可用数据线直接读取，绕开 App Group 隔离。
         // 只记录结构性信息（长度/数量/通道），不记录候选文字本身。
-        ProbeLog.log("FLUSH", [
-            ("reason", reason),
-            ("seq", String(pending.sequence)),
-            ("kind", String(describing: pending.kind)),
-            ("key", pending.keyLabel),
-            ("revAtRegister", String(pending.revisionAtRegistration)),
-            ("revNow", String(controller.state.compositionRevision)),
-            ("rawLen", String(controller.state.lastRimeOutput?.rawInput?.count ?? -1)),
-            ("engineCandidates", String(controller.state.lastRimeOutput?.candidates.count ?? -1)),
-            ("barCandidates", String(accumulatedCandidates.count)),
-            ("barRevision", String(candidateSnapshotCompositionRevision)),
-            ("channel", String(describing: keySpeechAnnouncer.channel.id)),
-            ("delivered", String(deferredKeySpeechDeliveredCount)),
-            ("timedOut", String(deferredKeySpeechTimedOutCount)),
-        ])
+        // 先逐项取好再传入：13 个元素的元组字面量一次性写会让类型检查超时。
+        var fields: [(String, String)] = []
+        fields.append(("reason", reason))
+        fields.append(("seq", String(pending.sequence)))
+        fields.append(("kind", String(describing: pending.kind)))
+        fields.append(("key", pending.keyLabel))
+        fields.append(("revAtRegister", String(revisionBefore)))
+        fields.append(("revNow", String(revisionNow)))
+        fields.append(("engineCandidates", String(engineCount)))
+        fields.append(("barCandidates", String(barCount)))
+        fields.append(("barRevision", String(candidateSnapshotCompositionRevision)))
+        fields.append(("channel", String(channelNumber)))
+        fields.append(("delivered", String(deferredKeySpeechDeliveredCount)))
+        fields.append(("timedOut", String(deferredKeySpeechTimedOutCount)))
+        ProbeLog.log("FLUSH", fields)
 
         // 诊断日志走运行时开关（Logger 的 logging_enabled），不受 #if DEBUG 限制。
         // 这样 Release 构建在真机上也能看到按键这一刻读到的到底是新值还是旧值。
