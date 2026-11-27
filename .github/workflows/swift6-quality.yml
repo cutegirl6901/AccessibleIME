@@ -104,9 +104,10 @@ jobs:
     name: test-keyboardcore
     needs: [classify_change, lightweight_checks]
     if: needs.classify_change.outputs.requires_full == 'true'
-    # KeyboardCore 只依赖 Foundation（无 UIKit），可在 Ubuntu 上 swift test。
-    # macOS runner 近期频繁排队超时，改到 Ubuntu 更稳更快。
-    runs-on: ubuntu-latest
+    # KeyboardCore 依赖 CoreGraphics（ChromeTouchHitGeometry.swift），
+    # Linux 无此模块，必须在 macOS 上跑。
+    # 不用 macos-26（arm64 池近期频繁排队超时），改用 macos-latest（x86_64）。
+    runs-on: macos-latest
     steps:
       - name: Check out source
         uses: actions/checkout@v4
