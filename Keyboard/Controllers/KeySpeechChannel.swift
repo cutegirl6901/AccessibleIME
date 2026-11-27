@@ -33,6 +33,12 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
     case queuedAnnouncement = 3
     case focusTransfer = 4
     case interruptingAnnouncement = 6
+    /// 通道 7：把候选写进按键的 accessibilityValue，再用 .layoutChanged 指回该键。
+    ///
+    /// 这是系统键盘的做法（见 TextInputUI 二进制：完全不使用 announcement），
+    /// 也是本项目唯一被真机证实「无障碍树本身是通的」的路径
+    /// （用户反馈：滑过按键能读出字母名）。
+    case keyValueRefresh = 7
     // 编号 5 保留空缺，不复用：0.2.17 曾把它分配给一个依赖
     // `UIAccessibility.Notification.valueChanged` 的通道，而该通知
     // 在 UIKit 中并不存在，那段代码从未编译过，已整体删除。
@@ -46,6 +52,7 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
         case .queuedAnnouncement: return "通道三，旁白公告，排队朗读"
         case .focusTransfer: return "通道四，旁白焦点转移"
         case .interruptingAnnouncement: return "通道六，旁白公告，打断式"
+        case .keyValueRefresh: return "通道七，按键值刷新"
         }
     }
 
@@ -56,6 +63,7 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
         case .queuedAnnouncement: return "旁白公告（排队）"
         case .focusTransfer: return "旁白焦点转移"
         case .interruptingAnnouncement: return "旁白公告（打断）"
+        case .keyValueRefresh: return "按键值刷新"
         }
     }
 
@@ -72,6 +80,8 @@ enum KeySpeechChannelID: Int, CaseIterable, Sendable {
             return "把旁白焦点移到第一个候选。0.2.11 确认能出声，但每键都要重扫无障碍树。"
         case .interruptingAnnouncement:
             return "同样每键一条旁白公告，但用默认优先级：会打断上一句，快速连打时永远听最新一条。"
+        case .keyValueRefresh:
+            return "把当前候选写进按键的 accessibilityValue，再让旁白重读这个键。与系统键盘一致，不依赖任何播报 API。"
         }
     }
 }
@@ -350,6 +360,38 @@ final class FocusTransferSpeechChannel: KeySpeechChannel {
     }
 }
 
+/// 通道 7：把候选写进按键的 accessibilityValue，再用 `.layoutChanged` 指回该键。
+///
+/// ## 为什么这条最可能有效
+///
+/// 1. 系统键盘就是这么做的：`TextInputUI` 二进制里
+///    `UIAccessibilityPostNotification` 出现 **0 次**，
+///    它靠元素自身的 value 变化配合布局通知。
+/// 2. 真机已确认本项目的无障碍树是通的——
+///    用户滑过按键能读出字母名，说明 label/traits 都正常。
+///    缺的只是「按下后把候选补进 value 并让旁白重读」这一步。
+/// 3. `.layoutChanged` 在本扩展里是有效的（项目 0.2.11 的成功记录
+///    用的正是它），失效的只有 `.announcement`。
+@MainActor
+final class KeyValueRefreshSpeechChannel: KeySpeechChannel {
+    let id: KeySpeechChannelID = .keyValueRefresh
+    var timing: KeySpeechDeliveryTiming { .afterUISync }
+
+    /// 由控制器注入：把候选写进按键 value 并刷新焦点。
+    var refreshKeyValue: ((String) -> Void)?
+
+    private(set) var speakCallCount = 0
+
+    func speak(_ text: String) {
+        speakCallCount += 1
+        refreshKeyValue?(text)
+    }
+
+    func stop() {
+        // 布局刷新无法取消，也不需要。
+    }
+}
+
 // MARK: - 工厂
 
 @MainActor
@@ -367,6 +409,8 @@ enum KeySpeechChannelFactory {
             return FocusTransferSpeechChannel()
         case .interruptingAnnouncement:
             return InterruptingAnnouncementSpeechChannel()
+        case .keyValueRefresh:
+            return KeyValueRefreshSpeechChannel()
         }
     }
 }

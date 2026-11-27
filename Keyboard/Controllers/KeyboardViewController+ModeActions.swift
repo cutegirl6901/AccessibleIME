@@ -85,6 +85,11 @@ extension KeyboardViewController {
                 self?.focusFirstCandidateAfterKeypress()
             }
         }
+        if let keyValue = channel as? KeyValueRefreshSpeechChannel {
+            keyValue.refreshKeyValue = { [weak self] text in
+                self?.refreshTouchedKeyAccessibilityValue(with: text)
+            }
+        }
     }
 
     /// 三击判定窗口。比双击大写（0.35 秒）宽，因为三击更慢。
@@ -211,6 +216,20 @@ extension KeyboardViewController {
 
     @objc func insertSpace(_ sender: UIButton) {
         guard !isKeyboardHeightAdjusting else { return }
+
+        // 快速双击空格 = 朗读自助诊断，本次不插入空格。
+        //
+        // 判据：与上一次空格点击的间隔小于 0.6 秒。
+        // 单击仍然照常插入空格，因此不影响正常使用。
+        let now = CACurrentMediaTime()
+        if now - lastSpaceTapTime <= Self.spaceDiagnosticDoubleTapWindow {
+            lastSpaceTapTime = 0
+            emitKeyPressFeedbackIfNeeded(for: sender)
+            speakSpaceDiagnostic()
+            return
+        }
+        lastSpaceTapTime = now
+
         emitKeyPressFeedbackIfNeeded(for: sender)
         let speechSequence = beginKeySpeechEvent()
         let effects = controller.handle(.insertSpace)
