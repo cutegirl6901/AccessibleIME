@@ -277,13 +277,17 @@ extension KeyboardViewController {
         // 真机结论：同一时刻摸候选区能读对，而按键播报读错，
         // 说明两者读的不是同一份数据。候选栏是用户能验证的「真相」，
         // 因此以它为准；只有候选栏尚未刷新（修订号落后）时才回退到引擎输出。
-        let barMatchesCurrentState =
-            !accumulatedCandidates.isEmpty
-            && candidateSnapshotCompositionRevision == state.compositionRevision
+        // 只要候选栏有内容就用它。
+        //
+        // 不再要求修订号严格相等：真机上二者经常不同步
+        // （候选栏的 revision 记录在刷新时写入，而 state 的 revision
+        // 在引擎应用时就已推进），严格比对会导致永远回退到引擎输出，
+        // 而引擎输出在异步路径下正是旧值——就是「永远读同一个字」的来源。
+        let barHasContent = !accumulatedCandidates.isEmpty
 
         let candidates: [String]
         let comments: [String?]
-        if barMatchesCurrentState {
+        if barHasContent {
             candidates = accumulatedCandidates.map(\.title)
             comments = accumulatedCandidates.map(\.comment)
         } else {
@@ -408,31 +412,30 @@ extension KeyboardViewController {
         // 真机表现为「第一个字符能读、之后全无声」。用户设备上很可能已存过 3，
         // 只改默认值不会生效。用独立标记确保只迁移一次，
         // 之后用户仍可在主 App 里自由改回其它通道。
-        let migrationKey = "key_speech_channel_migrated_to_key_value_refresh"
+        let migrationKey = "key_speech_channel_migrated_to_announcement"
         if !UserDefaults.standard.bool(forKey: migrationKey) {
             UserDefaults.standard.set(true, forKey: migrationKey)
-            // 真机结论汇总：
-            //   1/2 键盘自发声      → 本扩展里完全无声，已证伪
-            //   3   旁白公告        → 只在键盘刚出现时生效一次
-            //   4   焦点转移        → 能出声但会抢焦点，手感差
-            //   7   按键值刷新      → 与系统键盘同做法，待验证
-            // 因此把 1/2/3/4 统一迁移到 7。
-            let superseded: Set<Int> = [
-                KeySpeechChannelID.appVoiceIsolated.rawValue,
-                KeySpeechChannelID.appVoicePlayback.rawValue,
-                KeySpeechChannelID.queuedAnnouncement.rawValue,
-                KeySpeechChannelID.focusTransfer.rawValue,
-            ]
-            if let storedChannel, superseded.contains(storedChannel) {
+            // 真机结论（2026-11-27）：
+            //   1/2 键盘自发声 → 完全无声
+            //   3   旁白公告   → **唯一能出声**，但原先读的是旧候选
+            //   4   焦点转移   → 无声
+            //   7   按键值刷新 → 无声
+            // 全部收敛到 3。原先「读旧候选」的问题已通过把它的
+            // 投递时机从 beforeUISync 改为 afterUISync 修掉。
+            if storedChannel != nil,
+                storedChannel != KeySpeechChannelID.queuedAnnouncement.rawValue
+            {
                 UserDefaults.standard.set(
-                    KeySpeechChannelID.keyValueRefresh.rawValue,
+                    KeySpeechChannelID.queuedAnnouncement.rawValue,
                     forKey: Self.keySpeechChannelKey
                 )
             }
         }
 
         let channelNumber = value(for: Self.keySpeechChannelKey) as? Int
-        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .keyValueRefresh
+        // 真机唯一能出声的是通道 3（旁白公告）。其余通道在扩展里静默失败，
+        // 保留代码仅为对照，默认值固定回 3。
+        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .queuedAnnouncement
         if keySpeechAnnouncer.channel.id != channelID {
             keySpeechAnnouncer.selectChannel(channelID, announceName: false)
         }

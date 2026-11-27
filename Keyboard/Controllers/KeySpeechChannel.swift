@@ -287,7 +287,20 @@ final class PlaybackSessionSpeechChannel: AppVoiceSpeechChannel {
 @MainActor
 final class AnnouncementSpeechChannel: KeySpeechChannel {
     let id: KeySpeechChannelID = .queuedAnnouncement
-    var timing: KeySpeechDeliveryTiming { .beforeUISync }
+
+    /// 投递时机改为 `afterUISync`。
+    ///
+    /// 真机事实（2026-11-27）：这条是唯一能出声的通道，
+    /// 但不管输入什么，永远读「我们的我」。
+    ///
+    /// 原因：原先在 `beforeUISync` 投递，而候选栏数据是在
+    /// `syncUI` 内部的 `refreshCandidateBar()` 才更新的（见 Presentation.swift）。
+    /// 于是播报读到的是上一轮残留的候选——一直是同一个字。
+    ///
+    /// 改到 `syncUI` 之后投递，读到的才是本次按键的真实候选。
+    /// 0.2.5 曾记录「与 reloadData 同帧的公告会被系统丢弃」，
+    /// 但当前候选栏已改为就地更新（不 reloadData），该限制不再适用。
+    var timing: KeySpeechDeliveryTiming { .afterUISync }
 
     private(set) var speakCallCount = 0
 
