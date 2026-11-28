@@ -1,7 +1,8 @@
 import UIKit
 import XCTest
 
-@testable import Keyboard
+// 本 target 通过 fileSystemSynchronizedGroups 直接编译 Keyboard 源码，
+// KeyboardViewController 与我们在同一模块内，因此不能也不需要 import Keyboard。
 @testable import KeyboardCore
 
 /// 端到端验证：按下一个字符键后，该键的 accessibilityValue 是否变成候选。
