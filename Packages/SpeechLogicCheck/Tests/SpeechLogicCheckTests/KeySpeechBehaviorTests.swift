@@ -129,6 +129,22 @@ final class KeySpeechBehaviorTests: XCTestCase {
         XCTAssertNil(speak(s))
     }
 
+    // MARK: 真实字典（验证资源打包与解析）
+
+    func testRealDictionaryLoadsAndExplainsCharacters() {
+        let real = CharacterDescriptionTable.load(languageCode: "zh_CN")
+        XCTAssertGreaterThan(real.count, 1000, "zh_CN 字典应包含上千条目；为 0 说明资源没打进 target")
+
+        // 用真实字典生成播报，确认能给出解释而非只念原字。
+        let s = snapshot(composition: "w", candidates: ["我"])
+        let out = KeySpeechComposer.compose(
+            s, detail: .standard, table: real, includeKeyName: false
+        )
+        XCTAssertNotNil(out)
+        XCTAssertTrue(out!.hasPrefix("我"))
+        XCTAssertGreaterThan(out!.count, 1, "标准档应附带逐字解释")
+    }
+
     // MARK: 反漂移：枚举 case 必须与 KeyboardCore 一致
 
     func testSupportTypesMatchKeyboardCore() {

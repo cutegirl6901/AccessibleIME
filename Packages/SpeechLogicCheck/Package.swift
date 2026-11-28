@@ -23,7 +23,13 @@ let package = Package(
     name: "SpeechLogicCheck",
     platforms: [.macOS(.v13)],
     targets: [
-        .target(name: "SpeechLogicCheck"),
+        .target(
+            name: "SpeechLogicCheck",
+            // Bundle.module 需要 target 声明资源。
+            // 这两个字典与 KeyboardCore 里的是同一份文件（同样由
+            // check-speech-mirror.sh 校验），因此这里也能验证真实字典解析。
+            resources: [.copy("Resources/CharDescriptions")]
+        ),
         .testTarget(
             name: "SpeechLogicCheckTests",
             dependencies: ["SpeechLogicCheck"]

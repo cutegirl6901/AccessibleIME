@@ -16,22 +16,35 @@ DST="$ROOT/Packages/SpeechLogicCheck/Sources/SpeechLogicCheck"
 
 status=0
 
+check_pair() {
+  local src="$1" dst="$2" label="$3"
+  if [ ! -f "$src" ]; then
+    echo "::error::源文件缺失：$src"
+    status=1
+    return
+  fi
+  if [ ! -f "$dst" ]; then
+    echo "::error::副本缺失：$dst"
+    status=1
+    return
+  fi
+  if ! cmp -s "$src" "$dst"; then
+    echo "::error::$label 与原件不一致"
+    echo "  请执行：cp '$src' '$dst'"
+    status=1
+  fi
+}
+
 for f in KeySpeech.swift CharacterDescriptionTable.swift; do
-  if [ ! -f "$SRC/$f" ]; then
-    echo "::error::源文件缺失：$SRC/$f"
-    status=1
-    continue
-  fi
-  if [ ! -f "$DST/$f" ]; then
-    echo "::error::副本缺失：$DST/$f"
-    status=1
-    continue
-  fi
-  if ! cmp -s "$SRC/$f" "$DST/$f"; then
-    echo "::error file=Packages/SpeechLogicCheck/Sources/SpeechLogicCheck/$f::与 KeyboardCore 原件不一致"
-    echo "  请执行：cp '$SRC/$f' '$DST/$f'"
-    status=1
-  fi
+  check_pair "$SRC/$f" "$DST/$f" "SpeechLogicCheck/$f"
+done
+
+# 字典资源也必须是同一份，否则测试验证的解析行为与真机不同。
+for f in zh_CN.compact.txt zh_TW.compact.txt; do
+  check_pair \
+    "$SRC/Resources/CharDescriptions/$f" \
+    "$DST/Resources/CharDescriptions/$f" \
+    "SpeechLogicCheck/Resources/CharDescriptions/$f"
 done
 
 if [ "$status" -eq 0 ]; then
