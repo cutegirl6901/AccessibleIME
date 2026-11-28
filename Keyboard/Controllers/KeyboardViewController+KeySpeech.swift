@@ -232,11 +232,11 @@ extension KeyboardViewController {
             includeKeyName: includeKeyName
         )
         // 真机探针：这是最终交给旁白的文本，直接对应你能听到的内容。
-        ProbeLog.log("SPEAK", [
-            ("seq", String(sequence)),
-            ("chars", String(text?.count ?? -1)),
-            ("text", text ?? "<nil>"),
-        ])
+        var speakFields: [(String, String)] = []
+        speakFields.append(("seq", String(sequence)))
+        speakFields.append(("chars", String(text?.count ?? -1)))
+        speakFields.append(("text", text ?? "<nil>"))
+        ProbeLog.log("SPEAK", speakFields)
 
         // 一次按键一条播报：不合并、不防抖。
         let outcome = keySpeechAnnouncer.announce(text, sequence: sequence)
