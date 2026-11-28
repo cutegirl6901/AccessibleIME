@@ -130,11 +130,10 @@ nonisolated final class KeySpeechEndToEndTests: XCTestCase {
         owner.controller.rimeEngine = engine
         owner.controller.usesT9InputSemantics = false
 
-        let keys = try ["w", "n"].map { ch in
+        let buttonKeys = descendants(owner.rootStack).compactMap { $0 as? KeyboardKeyButton }
+        let keys: [KeyboardKeyButton] = try ["w", "n"].map { (ch: String) in
             try XCTUnwrap(
-                descendants(owner.rootStack)
-                    .compactMap { $0 as? KeyboardKeyButton }
-                    .first { $0.accessibilityIdentifier == ch || $0.title(for: .normal) == ch },
+                buttonKeys.first { $0.accessibilityIdentifier == ch || $0.title(for: .normal) == ch },
                 "找不到 \(ch) 键"
             )
         }
