@@ -20,6 +20,21 @@ final class KeyboardKeyButton: UIButton {
     var localTouchBounds: CGRect?
     var visualStyle: KeyVisualStyle = .character
 
+    /// 九宫格（T9）键要送给 RIME 的数字身份，例如 `"2"`。
+    ///
+    /// ## 为什么不放在 accessibilityValue
+    ///
+    /// `accessibilityValue` 是**无障碍专用**字段：VoiceOver 会把它和 label 一起朗读。
+    /// 系统键盘正是用它承载「按下后读出的内容」（见 TextInputUI：
+    /// 按键自身有 label，候选写进 value）。
+    ///
+    /// 早先的实现把 `"t9Digit"` 这个业务标记塞进 accessibilityValue，
+    /// 导致两个用途抢同一个字段——一旦播报写入候选，T9 身份就丢了，
+    /// 后续按键会把显示字符（MNO）当成输入，组合彻底错乱。
+    ///
+    /// 因此把身份移到这个专用属性上，accessibilityValue 归还给无障碍。
+    var t9DigitIdentity: String?
+
     #if DEBUG
         /// Kept on the button so diagnostics see UIKit's real tracking terminals,
         /// including cancellations that do not result in a business key action.

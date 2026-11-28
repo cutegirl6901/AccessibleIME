@@ -25,7 +25,12 @@ extension KeyboardViewController {
     func makeT9KeyButton(digit: String, letters: String) -> UIButton {
         let button = makeKeyButton(title: letters.isEmpty ? digit : letters, action: #selector(insertKey(_:)))
         button.accessibilityIdentifier = digit
-        button.accessibilityValue = Self.t9DigitAccessibilityValue
+        // 数字身份放在专用属性上，不使用 accessibilityValue。
+        // accessibilityValue 是旁白朗读用的，播报会往里写候选；
+        // 若身份也放这里，两者互相覆盖（曾导致 T9 组合错乱）。
+        if let keyButton = button as? KeyboardKeyButton {
+            keyButton.t9DigitIdentity = digit
+        }
         if letters.isEmpty {
             button.accessibilityLabel = "数字 \(digit)"
             applyKeyStyle(.character, to: button)

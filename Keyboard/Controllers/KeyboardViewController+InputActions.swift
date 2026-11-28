@@ -5,12 +5,15 @@ extension KeyboardViewController {
     @objc func insertKey(_ sender: UIButton) {
         guard !isKeyboardHeightAdjusting else { return }
         // T9 letter-group keys show `ABC` etc. but must send the digit identity to RIME.
+        // 优先读专用的 t9DigitIdentity，它与无障碍无关，不会被播报覆盖。
+        // 退化读取 accessibilityValue 只为兼容改版前已创建的按钮实例。
         let key: String
-        if sender.accessibilityValue == KeyboardViewController.t9DigitAccessibilityValue,
-            let digit = sender.accessibilityIdentifier,
-            !digit.isEmpty
-        {
-            key = digit
+        let t9Digit =
+            (sender as? KeyboardKeyButton)?.t9DigitIdentity
+            ?? (sender.accessibilityValue == KeyboardViewController.t9DigitAccessibilityValue
+                ? sender.accessibilityIdentifier : nil)
+        if let t9Digit, !t9Digit.isEmpty {
+            key = t9Digit
         } else {
             key =
                 sender.title(for: .normal)
