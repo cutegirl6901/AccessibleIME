@@ -36,7 +36,11 @@ extension KeyboardViewController {
         case #selector(handleInputModeList(from:with:)):
             button.accessibilityIdentifier = "nextKeyboard"
             button.accessibilityLabel = "切换键盘"
-            button.accessibilityHint = "按住以选择其他键盘。"
+            // 诊断出口：这个键的 value 会随每次按键更新为最近一次播报状态。
+            // 用户摸到它就能听到「焦点走到哪一级」，无需任何数据线或额外手势。
+            // 用这个键是因为它常在、且不参与文字输入，覆盖 value 无副作用。
+            button.accessibilityValue = lastSpeechDiagnostic ?? "尚无播报记录"
+            button.accessibilityHint = "按住以选择其他键盘。当前播报状态见数值。"
 
         case #selector(toggleKeyboardPage(_:)):
             button.accessibilityLabel = "键盘页面"

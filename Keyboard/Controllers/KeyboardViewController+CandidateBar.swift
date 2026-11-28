@@ -246,16 +246,66 @@ extension KeyboardViewController {
 
         // 候选栏已在本次 syncUI 内就地更新完毕，这里只等一个主线程循环，
         // 让 UIKit 提交本帧布局，然后立刻转移焦点。
+        //
+        // ## 三级兜底
+        //
+        // 真机反馈：切应用回来偶尔能读一次、之后全无。
+        // 说明这条路径「有时能通」，失败点在其中某个 guard 上。
+        // 因此把三个可能失败的位置分开，逐级降级，并记录实际走到哪一级：
+        //   1. 指向第一格候选 (cell)          —— 最佳，能读出完整候选标签
+        //   2. 指向候选栏容器 (collectionView) —— 格未渲染时用它，旁白会读容器
+        //   3. 退回 announcement              —— 两条都不通时最后尝试
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            guard self.candidateAnnouncementSequence == sequence else { return }
-            guard !self.isCandidateExpanded else { return }
-            guard let collectionView = self.candidateCollectionView else { return }
-            guard collectionView.numberOfItems(inSection: 0) > 0 else { return }
+            guard self.candidateAnnouncementSequence == sequence else {
+                self.recordFocusOutcome("superseded")
+                return
+            }
+            guard !self.isCandidateExpanded else {
+                self.recordFocusOutcome("expanded-blocked")
+                return
+            }
+
+            guard let collectionView = self.candidateCollectionView else {
+                self.recordFocusOutcome("no-collection-view")
+                self.fallbackAnnounce(firstText)
+                return
+            }
+            guard collectionView.numberOfItems(inSection: 0) > 0 else {
+                self.recordFocusOutcome("collection-empty")
+                self.fallbackAnnounce(firstText)
+                return
+            }
+
             let indexPath = IndexPath(item: 0, section: 0)
-            guard let cell = collectionView.cellForItem(at: indexPath) else { return }
-            UIAccessibility.post(notification: .layoutChanged, argument: cell)
+            if let cell = collectionView.cellForItem(at: indexPath) {
+                self.recordFocusOutcome("cell")
+                UIAccessibility.post(notification: .layoutChanged, argument: cell)
+            } else {
+                // 格还没渲染出来（cellForItem 返回 nil）。
+                // 这种情况在快速输入或首帧时很常见，指向容器仍能出声。
+                self.recordFocusOutcome("container")
+                UIAccessibility.post(notification: .layoutChanged, argument: collectionView)
+            }
         }
+    }
+
+    /// 焦点转移两条路都失败时的最后尝试。
+    ///
+    /// announcement 在扩展里大多听不到，但「偶尔能听到一次」——
+    /// 有总比完全静默好，且不影响主路径。
+    private func fallbackAnnounce(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: AccessibilityAnnouncement.queued(trimmed)
+        )
+    }
+
+    /// 记录焦点转移走到哪一级，供「双击空格」诊断朗读。
+    func recordFocusOutcome(_ outcome: String) {
+        lastFocusOutcome = outcome
     }
 
     /// 文字真正进入输入框后，用 VoiceOver 播报「词 + 逐字解释」。

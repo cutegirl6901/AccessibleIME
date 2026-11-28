@@ -135,6 +135,7 @@ extension KeyboardViewController {
         summary += "修订\(revisionBefore)到\(revisionNow)，"
         summary += "引擎候选\(engineCount)个，"
         summary += "候选栏\(barCount)个"
+        summary += "，焦点\(lastFocusOutcome)"
         lastSpeechDiagnostic = summary
 
         // 真机探针：系统日志可用数据线直接读取，绕开 App Group 隔离。
@@ -180,6 +181,19 @@ extension KeyboardViewController {
             committedOverride: pending.committedOverride,
             deletedOverride: pending.deletedOverride
         )
+
+        // 把诊断同步到「切换键盘」键的 value：
+        // 用户摸到该键即可听到最近一次播报的实际状态，无需数据线。
+        refreshDiagnosticExposure()
+    }
+
+    /// 把最新诊断写进「切换键盘」键的 accessibilityValue。
+    ///
+    /// 这个键在中文键盘上始终存在，且不承载文字输入，
+    /// 覆盖它的 value 不会影响任何输入行为。
+    func refreshDiagnosticExposure() {
+        guard let button = nextKeyboardButton else { return }
+        button.accessibilityValue = lastSpeechDiagnostic ?? "尚无播报记录"
     }
 
     /// 按键结束：快照 → 生成文本 → 投递。
@@ -421,10 +435,10 @@ extension KeyboardViewController {
             // 全部收敛到 3。原先「读旧候选」的问题已通过把它的
             // 投递时机从 beforeUISync 改为 afterUISync 修掉。
             if storedChannel != nil,
-                storedChannel != KeySpeechChannelID.queuedAnnouncement.rawValue
+                storedChannel != KeySpeechChannelID.focusTransfer.rawValue
             {
                 UserDefaults.standard.set(
-                    KeySpeechChannelID.queuedAnnouncement.rawValue,
+                    KeySpeechChannelID.focusTransfer.rawValue,
                     forKey: Self.keySpeechChannelKey
                 )
             }
@@ -433,7 +447,10 @@ extension KeyboardViewController {
         let channelNumber = value(for: Self.keySpeechChannelKey) as? Int
         // 真机唯一能出声的是通道 3（旁白公告）。其余通道在扩展里静默失败，
         // 保留代码仅为对照，默认值固定回 3。
-        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .queuedAnnouncement
+        // 项目文档明确记载：announcement 在键盘扩展里听不到（0.2.2-0.2.10 全失败），
+        // 焦点转移是唯一有真机成功记录的路径（0.2.11）。
+        // 之前把默认设成 announcement 是错的，这里改回焦点转移。
+        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .focusTransfer
         if keySpeechAnnouncer.channel.id != channelID {
             keySpeechAnnouncer.selectChannel(channelID, announceName: false)
         }

@@ -320,6 +320,12 @@ class KeyboardViewController: UIInputViewController {
     /// 只保留最近一次，够判断「读到的是新数据还是旧数据」。
     var lastSpeechDiagnostic: String?
 
+    /// 上一次焦点转移实际走到哪一级（cell / container / 各种失败原因）。
+    ///
+    /// 真机上「切应用回来偶尔能读一次」说明这条路径部分可用但存在失败点。
+    /// 记录它，双击空格即可听到，不必反复试。
+    var lastFocusOutcome: String = "unknown"
+
     /// 诊断专用的发声器缓存（不参与通道切换，保证诊断一定能出声）。
     var cachedDiagnosticChannel: (any KeySpeechChannel)?
 
