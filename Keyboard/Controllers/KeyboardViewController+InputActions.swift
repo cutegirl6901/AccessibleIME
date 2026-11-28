@@ -18,6 +18,8 @@ extension KeyboardViewController {
                 ?? ""
         }
         guard !key.isEmpty else { return }
+        // 记下这次触摸的键：播报时要把候选写进它的 accessibilityValue。
+        lastTouchedCharacterKey = sender
         #if DEBUG && KEYBOARD_WAKE_OWNER_PROBE
             let wakeAttempt = KeyboardWakeOwnerProbe.shared.beginAttempt(appearanceOrdinal: wakeProbeAppearanceOrdinal)
             recordWakeOwnerProbe(.insertBegin)
@@ -88,11 +90,6 @@ extension KeyboardViewController {
             keyLabel: key,
             sequence: speechSequence
         )
-        // 非异步路径（responsive 管线关闭）下 handle() 已同步更新状态，
-        // 无需等待快照回调，立刻发声以免白白多等一个超时。
-        if !controller.isResponsiveRimePipelineEnabled {
-            deliverDeferredKeySpeechIfNeeded(timing: .beforeUISync)
-        }
 
         #if DEBUG
             T9QA001DeviceTrace.shared.record(.returned, owner: self)

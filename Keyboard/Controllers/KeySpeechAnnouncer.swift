@@ -59,7 +59,7 @@ final class KeySpeechAnnouncer {
 
     /// 便利初始化：默认排队公告通道（旁白先念键名，候选随后跟上）。
     convenience init() {
-        self.init(channel: KeySpeechChannelFactory.make(.queuedAnnouncement))
+        self.init(channel: KeySpeechChannelFactory.make(.keyValueRefresh))
     }
 
     // MARK: - 状态
@@ -81,10 +81,8 @@ final class KeySpeechAnnouncer {
     /// 当前播报通道。spike 期间可用三击 Shift 循环切换。
     ///
     /// 默认焦点转移（通道 4），即当前已发布行为；只有用户主动切换才改变。
-    /// 通过 `channelDidChange` 让控制器知道是否需要注入回调（通道 4/5）。
-    private(set) var channel: any KeySpeechChannel
-    /// 通道切换后回调，供控制器注入 focusFirstCandidate / statusElementProvider。
-    var channelDidChange: ((any KeySpeechChannel) -> Void)?
+    /// 唯一的播报通道，不再支持运行时切换。
+    let channel: any KeySpeechChannel
 
     /// 诊断：所有通道被调用 speak 的累计次数。
     private(set) var totalSpeakCalls = 0
@@ -191,41 +189,6 @@ final class KeySpeechAnnouncer {
             return
         }
         post(next.text, sequence: next.sequence)
-    }
-
-    // MARK: - 通道切换（诊断 spike）
-
-    /// 切到下一条通道，并朗读这条通道自己的名字。
-    ///
-    /// 朗读名字的通道与切过去的通道是同一个：
-    /// 若在新通道里说不出话，用户听不到名字，就说明这条通道静默。
-    /// 这本身就是最有价值的诊断信号，不要改成用旧通道播报。
-    @discardableResult
-    func cycleChannel() -> any KeySpeechChannel {
-        channel.stop()
-        let all = KeySpeechChannelID.allCases
-        let currentIndex = all.firstIndex(of: channel.id) ?? 0
-        let nextID = all[(currentIndex + 1) % all.count]
-        let next = KeySpeechChannelFactory.make(nextID)
-        channel = next
-        channelDidChange?(next)
-        // 先念名字，让用户确认切到了哪一条。
-        totalSpeakCalls += 1
-        next.speak(nextID.spokenName)
-        return next
-    }
-
-    /// 设置页直接选某条通道（不做循环）。
-    func selectChannel(_ id: KeySpeechChannelID, announceName: Bool) {
-        guard channel.id != id else { return }
-        channel.stop()
-        let next = KeySpeechChannelFactory.make(id)
-        channel = next
-        channelDidChange?(next)
-        if announceName {
-            totalSpeakCalls += 1
-            next.speak(id.spokenName)
-        }
     }
 
     // MARK: - 生命周期

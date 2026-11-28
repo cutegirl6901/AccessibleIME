@@ -20,15 +20,11 @@ struct KeySpeechSettingsView: View {
     @AppStorage("key_speech_delivery_mode", store: UserDefaults.standard)
     private var deliveryMode: String = "immediate"
 
-    // 语音通道。默认 3 = 旁白公告（低优先级排队）：旁白先念键名，候选随后跟上。
-    @AppStorage("key_speech_channel", store: UserDefaults.standard)
-    private var channel: Int = 3
-
     var body: some View {
         Form {
             Section {
-                Text("默认设置不用改。回到键盘打一个字母，应该先听到键名，紧接着听到候选。")
-                Text("如果完全听不到候选，在键盘上三击大小写键换下一条语音通道，再试一次。")
+                Text("默认设置不用改。回到键盘打一个字母，应该能听到该键和当前候选。")
+                Text("若想确认播报是否正常：摸到左下角的「切换键盘」键，它会报出最近一次播报状态。")
             } header: {
                 Text("怎么用")
             }
@@ -61,34 +57,11 @@ struct KeySpeechSettingsView: View {
                 Text(deliveryModeDescription)
             }
 
-            Section {
-                Picker("语音通道", selection: $channel) {
-                    Text("三，旁白公告，排队朗读（推荐）").tag(3)
-                    Text("六，旁白公告，打断上一句").tag(6)
-                    Text("一，应用语音，独立音频会话").tag(1)
-                    Text("二，应用语音，播放类别混音").tag(2)
-                    Text("四，旁白焦点转移").tag(4)
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } header: {
-                Text("语音通道")
-            } footer: {
-                Text(channelDescription)
-                Text("也可以在键盘上三击大小写键循环切换，切到时键盘会先读通道名。若听不到通道名，就说明这条通道没声音。")
-            }
-
-            Section {
-                Text("只有通道三走旁白自己的语音与语速，听感与系统输入法一致。")
-                Text("通道一、二由键盘自己发声，用固定语速，不会排队，也不会移动焦点。")
-                Text("候选词本身的无障碍标签始终包含逐字解释，无论这里怎么设置；关闭按键播报只影响「按键」反馈。")
-            }
         }
         .navigationTitle("按键播报")
         .tint(.primary)
         .onChange(of: detail) { _, _ in defaults.synchronize() }
         .onChange(of: deliveryMode) { _, _ in defaults.synchronize() }
-        .onChange(of: channel) { _, _ in defaults.synchronize() }
     }
 
     private var detailDescription: String {
@@ -99,22 +72,6 @@ struct KeySpeechSettingsView: View {
             return "候选词加逐字解释，例如「你，你们的你」。"
         case .detailed:
             return "再加 RIME 提供的读音，例如「你，nǐ，你们的你」。"
-        }
-    }
-
-    private var channelDescription: String {
-        // 说明每条通道的行为，以及什么时候该换别的通道。
-        switch channel {
-        case 1:
-            return "一：键盘自己发声，不使用应用音频会话。若扩展里默认会话被静音，这条会绕开它。"
-        case 2:
-            return "二：键盘自己发声，并把音频会话设为播放混音。用于验证静音开关打开时能否出声。"
-        case 4:
-            return "四：把旁白焦点移到第一个候选，靠焦点变化朗读。会抢走按键焦点，连续打字手感与系统键盘不同。"
-        case 6:
-            return "六：每键一条旁白公告，但会打断上一句。快速连打时总是读最新一条，代价是键名可能被切掉。"
-        default:
-            return "三：发一条低优先级旁白公告，排在键名之后朗读。不移动焦点、不打断旁白，最接近系统输入法。"
         }
     }
 

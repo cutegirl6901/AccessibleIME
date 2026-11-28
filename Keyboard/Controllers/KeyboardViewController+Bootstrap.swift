@@ -45,7 +45,6 @@ extension KeyboardViewController {
             // 引擎快照此刻已落地（applyRimeOutput 已执行），
             // 这时拍快照才能读到本次按键真正产生的候选。
             // 公告类通道必须在 syncUI 之前投递；焦点转移类必须在其后。
-            self.deliverDeferredKeySpeechIfNeeded(timing: .beforeUISync)
             self.syncUI(with: effects)
             self.deliverDeferredKeySpeechIfNeeded(timing: .afterUISync)
             #if DEBUG

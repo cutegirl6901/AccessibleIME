@@ -396,12 +396,8 @@ extension KeyboardViewController {
                 sequence: speechSequence,
                 deletedOverride: deleted
             )
-            // 注意：syncUI 已在上面（第 365 行）执行完毕，
-            // 因此这里只能投递 afterUISync 时机的通道。
-            // 投 beforeUISync 会永远匹配不到（该时机早已过去），整条播报静默。
-            if !controller.isResponsiveRimePipelineEnabled {
-                deliverDeferredKeySpeechIfNeeded(timing: .afterUISync)
-            }
+            // syncUI 已在上面执行完毕，直接投递即可。
+            deliverDeferredKeySpeechIfNeeded(timing: .afterUISync)
         }
         return observed
     }

@@ -58,34 +58,19 @@ extension KeyboardViewController {
         }
     }
 
-    /// 朗读自助诊断。
+    /// 把最近一次播报状态写进「切换键盘」键的 accessibilityValue。
     ///
-    /// 走当前通道发声：这一句能不能听到，本身就说明该通道是否可用。
-    /// 朗读自助诊断。
-    ///
-    /// 刻意**不走当前通道**，而是固定用应用语音（AVSpeechSynthesizer）发声：
-    /// 这一句的作用是确认「声音能不能出来」，如果它也依赖通道，
-    /// 通道坏了就永远得不到任何反馈，无法判断到底哪一层出了问题。
+    /// 真机上 AVSpeechSynthesizer 完全不出声，因此诊断不走语音，
+    /// 而是让用户摸到那个键时由旁白读出（无障碍树已验证可用）。
     func speakSpaceDiagnostic() {
-        let message: String
-        if let diagnostic = lastSpeechDiagnostic {
-            message = "诊断：" + diagnostic
-        } else {
-            message = "诊断：还没有按键记录。请先输入几个字母，再快速双击空格。"
-        }
-        diagnosticChannel.speak(message)
-        ProbeLog.log("DIAG_TAP", [
-            ("message", message),
-            ("currentChannel", String(describing: keySpeechAnnouncer.channel.id)),
-        ])
-    }
-
-    /// 专供诊断使用的独立发声器：不参与通道切换，确保一定能出声。
-    var diagnosticChannel: any KeySpeechChannel {
-        if let existing = cachedDiagnosticChannel { return existing }
-        let created = KeySpeechChannelFactory.make(.appVoiceIsolated)
-        cachedDiagnosticChannel = created
-        return created
+        refreshDiagnosticExposure()
+        let text = lastSpeechDiagnostic ?? "尚无播报记录"
+        // 同时尝试一次 announcement：能听到最好，听不到也不影响 value。
+        UIAccessibility.post(
+            notification: .announcement,
+            argument: AccessibilityAnnouncement.queued(text)
+        )
+        ProbeLog.log("DIAG_TAP", [("message", text)])
     }
 
     func endSpaceCursorMovementForHeightAdjustment() {

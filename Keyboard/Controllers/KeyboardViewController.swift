@@ -267,10 +267,7 @@ class KeyboardViewController: UIInputViewController {
     var candidateAnnouncementSequence: UInt64 = 0
     /// 按键即读：序号、投递模式与严格排队状态都封装在这里。
     let keySpeechAnnouncer = KeySpeechAnnouncer()
-    /// 播报通道由 keySpeechAnnouncer.channel 持有（见 KeySpeechChannel.swift）。
     /// 三击 Shift 切换播报通道用的连击计数与时间戳。
-    var shiftTapChainForChannelSwitch = 0
-    var lastShiftTapForChannelSwitchTime: CFTimeInterval?
 
     /// 上一次把 VoiceOver 焦点移过去的候选文本，避免同一候选重复抢焦点。
     var lastFocusedCandidateText: String?
@@ -320,14 +317,21 @@ class KeyboardViewController: UIInputViewController {
     /// 只保留最近一次，够判断「读到的是新数据还是旧数据」。
     var lastSpeechDiagnostic: String?
 
+    /// 最近一次触摸按下的字符键。
+    ///
+    /// 播报时把候选写进它的 accessibilityValue，再让旁白重读这个键。
+    /// 焦点不会离开手指下的键，连续打字不被打断。
+    weak var lastTouchedCharacterKey: UIButton?
+
+    /// 上一次值刷新实际走到哪一步（用于诊断）。
+    var lastFocusOutcome: String = "unknown"
+
     /// 上一次焦点转移实际走到哪一级（cell / container / 各种失败原因）。
     ///
     /// 真机上「切应用回来偶尔能读一次」说明这条路径部分可用但存在失败点。
     /// 记录它，双击空格即可听到，不必反复试。
     var lastFocusOutcome: String = "unknown"
 
-    /// 诊断专用的发声器缓存（不参与通道切换，保证诊断一定能出声）。
-    var cachedDiagnosticChannel: (any KeySpeechChannel)?
 
 
     /// 上一次点击空格的时间，用于识别「快速双击空格」= 朗读诊断。

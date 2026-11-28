@@ -84,10 +84,8 @@ extension KeyboardViewController {
     ///
     /// 此时 `applyRimeOutput` 已经执行完，`state.lastRimeOutput` 是本轮的新值。
     ///
-    /// - Parameter timing: 只投递与该时机匹配的通道。
-    ///   `beforeUISync` 通道（默认的排队公告）在 `syncUI` **之前**投递，
-    ///   这是 0.2.5 记录过的结论：与 `reloadData` 同帧的公告会被系统丢弃。
-    ///   `afterUISync` 通道（焦点转移）必须等候选栏刷新完，否则移到空列表上。
+    /// 只在 `syncUI` 之后投递：候选栏数据是在 `syncUI` 内部刷新的，
+    /// 在此之前读候选只能拿到上一轮残留。
     func deliverDeferredKeySpeechIfNeeded(timing: KeySpeechDeliveryTiming) {
         guard let pending = deferredKeySpeech else { return }
 
@@ -102,9 +100,7 @@ extension KeyboardViewController {
             return
         }
 
-        // 通道可能在等待期间被切换；以投递时的实际通道为准。
-        guard keySpeechAnnouncer.channel.timing == timing else { return }
-        flushDeferredKeySpeech(reason: "snapshot-\(timing == .beforeUISync ? "pre" : "post")")
+        flushDeferredKeySpeech(reason: "snapshot")
     }
 
     /// 拍快照并投递，然后清空登记。
@@ -404,59 +400,43 @@ extension KeyboardViewController {
         keySpeechAnnouncer.deliveryMode =
             KeySpeechAnnouncer.DeliveryMode(rawValue: modeRaw) ?? .immediate
 
-        // 播报通道。
+        // 播报通道固定为焦点转移，不再读取持久化值。
         //
-        // 默认改为 2（键盘自己用 AVSpeechSynthesizer 发声）。
-        //
-        // 为什么不再用通道 3（旁白公告）：
-        // 真机反复确认——`UIAccessibility.post(.announcement)` 在键盘扩展里
-        // 只在键盘刚出现时生效一次，之后系统静默丢弃。
-        // 观察到的现象与此完全一致：「切到别的 App 再切回来，第一个字符能读对，
-        // 之后所有按键都无声」。0.2.2–0.2.10 的历史记录也是同一结论
-        //（「时有时无，后期完全听不到」）。
-        //
-        // 键盘自己发声不经过旁白队列，因此不受该限制；代价是需要自己念键名，
-        // 已由 `includesKeyName = true` 处理。
-        let storedChannel = value(for: Self.keySpeechChannelKey) as? Int
+        // 历史上存过 1/2/3/4/6 各种通道号。真机结论：
+        //   1/2 键盘自发声 → 完全无声
+        //   3   旁白公告   → 只在键盘刚出现时偶尔放行一次
+        //   4   焦点转移   → 唯一稳定可用
+        // 因此不再提供选择，也不再读旧值——避免旧配置把播报带进静默状态。
+        installKeyValueSpeechCallback()
+    }
 
-        // 一次性迁移：把旧的「旁白公告」通道强制切到应用语音。
-        //
-        // 原因：通道 3 在键盘扩展里只在键盘出现时生效一次，之后系统静默丢弃，
-        // 真机表现为「第一个字符能读、之后全无声」。用户设备上很可能已存过 3，
-        // 只改默认值不会生效。用独立标记确保只迁移一次，
-        // 之后用户仍可在主 App 里自由改回其它通道。
-        let migrationKey = "key_speech_channel_migrated_to_announcement"
-        if !UserDefaults.standard.bool(forKey: migrationKey) {
-            UserDefaults.standard.set(true, forKey: migrationKey)
-            // 真机结论（2026-11-27）：
-            //   1/2 键盘自发声 → 完全无声
-            //   3   旁白公告   → **唯一能出声**，但原先读的是旧候选
-            //   4   焦点转移   → 无声
-            // 全部收敛到 3。原先「读旧候选」的问题已通过把它的
-            // 投递时机从 beforeUISync 改为 afterUISync 修掉。
-            if storedChannel != nil,
-                storedChannel != KeySpeechChannelID.focusTransfer.rawValue
-            {
-                UserDefaults.standard.set(
-                    KeySpeechChannelID.focusTransfer.rawValue,
-                    forKey: Self.keySpeechChannelKey
-                )
-            }
+    /// 绑定唯一的播报通道：把文本写进当前按键的 accessibilityValue。
+    ///
+    /// 放在本文件而不是 +KeyAccessibility.swift，因为后者被编进
+    /// KeyboardExtensionTests target（那里没有 KeyboardViewController），
+    /// 引用控制器属性会导致测试 target 编译失败。
+    func installKeyValueSpeechCallback() {
+        guard let channel = keySpeechAnnouncer.channel as? KeyValueSpeechChannel else { return }
+        channel.applyValueToKey = { [weak self] text in
+            self?.applySpeechValueToCurrentKey(text)
         }
+    }
 
-        let channelNumber = value(for: Self.keySpeechChannelKey) as? Int
-        // 真机唯一能出声的是通道 3（旁白公告）。其余通道在扩展里静默失败，
-        // 保留代码仅为对照，默认值固定回 3。
-        // 项目文档明确记载：announcement 在键盘扩展里听不到（0.2.2-0.2.10 全失败），
-        // 焦点转移是唯一有真机成功记录的路径（0.2.11）。
-        // 之前把默认设成 announcement 是错的，这里改回焦点转移。
-        let channelID = channelNumber.flatMap(KeySpeechChannelID.init(rawValue:)) ?? .focusTransfer
-        if keySpeechAnnouncer.channel.id != channelID {
-            keySpeechAnnouncer.selectChannel(channelID, announceName: false)
+    /// 把播报文本写进「当前按下的那个键」，并让旁白重读该键。
+    ///
+    /// 关键点：`argument` 传的是**键本身**，不是候选格。
+    /// 旁白会重新读这个键的 label + value，
+    /// 于是听到「n，你」，而焦点仍停在键上，不会跳到候选栏。
+    func applySpeechValueToCurrentKey(_ text: String) {
+        guard let key = lastTouchedCharacterKey else { return }
+        key.accessibilityValue = text
+
+        // 下一轮主循环再发 layoutChanged：
+        // 让 UIKit 先提交本帧布局，旁白才能定位到元素。
+        DispatchQueue.main.async { [weak key] in
+            guard let key, key.window != nil else { return }
+            UIAccessibility.post(notification: .layoutChanged, argument: key)
         }
-        // 无条件注入回调：只有部分通道需要它，但漏注入会让整条通道静默，
-        // 而代价只是一次可选绑定赋值。
-        installSpeechChannelCallbacks(keySpeechAnnouncer.channel)
     }
 
     /// 键盘消失/切换 App 时清理，避免下次出现念上次残留。
@@ -477,5 +457,4 @@ extension KeyboardViewController {
 
     static let keySpeechDetailKey = "key_speech_detail"
     static let keySpeechDeliveryModeKey = "key_speech_delivery_mode"
-    static let keySpeechChannelKey = "key_speech_channel"
 }
