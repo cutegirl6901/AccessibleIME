@@ -51,6 +51,9 @@ protocol KeySpeechChannel: AnyObject {
 final class KeyValueSpeechChannel: KeySpeechChannel {
     var id: KeySpeechChannelID { .keyValueRefresh }
 
+    /// 键盘自己读，需要把键名一起念出来（旁白不会念这次按键）。
+    var includesKeyName: Bool { true }
+
     /// 由控制器注入：把文本写进当前按键的 accessibilityValue，
     /// 并用 `.layoutChanged` 指回那个键（不是候选栏）。
     var applyValueToKey: ((String) -> Void)?

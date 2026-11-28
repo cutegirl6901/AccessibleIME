@@ -121,17 +121,16 @@ extension KeyboardViewController {
         // 读的不是同一份数据。
         let engineCount = controller.state.lastRimeOutput?.candidates.count ?? -1
         let barCount = accumulatedCandidates.count
-        let channelNumber = keySpeechAnnouncer.channel.id.rawValue
         let revisionBefore = pending.revisionAtRegistration
         let revisionNow = controller.state.compositionRevision
+        let hasKey = lastTouchedCharacterKey != nil
 
         // 逐段拼接：整条表达式一次性写会让类型检查超时。
-        var summary = "通道\(channelNumber)，"
-        summary += "取数\(reason)，"
+        var summary = "取数\(reason)，"
         summary += "修订\(revisionBefore)到\(revisionNow)，"
         summary += "引擎候选\(engineCount)个，"
-        summary += "候选栏\(barCount)个"
-        summary += "，焦点\(lastFocusOutcome)"
+        summary += "候选栏\(barCount)个，"
+        summary += hasKey ? "已记录按键" : "无按键记录"
         lastSpeechDiagnostic = summary
 
         // 真机探针：系统日志可用数据线直接读取，绕开 App Group 隔离。
@@ -147,7 +146,6 @@ extension KeyboardViewController {
         fields.append(("engineCandidates", String(engineCount)))
         fields.append(("barCandidates", String(barCount)))
         fields.append(("barRevision", String(candidateSnapshotCompositionRevision)))
-        fields.append(("channel", String(channelNumber)))
         fields.append(("delivered", String(deferredKeySpeechDeliveredCount)))
         fields.append(("timedOut", String(deferredKeySpeechTimedOutCount)))
         ProbeLog.log("FLUSH", fields)
@@ -236,7 +234,6 @@ extension KeyboardViewController {
             ("seq", String(sequence)),
             ("chars", String(text?.count ?? -1)),
             ("text", text ?? "<nil>"),
-            ("channel", String(describing: keySpeechAnnouncer.channel.id)),
         ])
 
         // 一次按键一条播报：不合并、不防抖。

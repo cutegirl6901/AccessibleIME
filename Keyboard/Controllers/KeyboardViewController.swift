@@ -323,15 +323,6 @@ class KeyboardViewController: UIInputViewController {
     /// 焦点不会离开手指下的键，连续打字不被打断。
     weak var lastTouchedCharacterKey: UIButton?
 
-    /// 上一次值刷新实际走到哪一步（用于诊断）。
-    var lastFocusOutcome: String = "unknown"
-
-    /// 上一次焦点转移实际走到哪一级（cell / container / 各种失败原因）。
-    ///
-    /// 真机上「切应用回来偶尔能读一次」说明这条路径部分可用但存在失败点。
-    /// 记录它，双击空格即可听到，不必反复试。
-    var lastFocusOutcome: String = "unknown"
-
 
 
     /// 上一次点击空格的时间，用于识别「快速双击空格」= 朗读诊断。
