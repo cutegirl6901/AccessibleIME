@@ -428,6 +428,17 @@ extension KeyboardViewController {
     /// 于是听到「n，你」，而焦点仍停在键上，不会跳到候选栏。
     func applySpeechValueToCurrentKey(_ text: String) {
         guard let key = lastTouchedCharacterKey else { return }
+
+        // 绝对不能改写九宫格（T9）字母键的 accessibilityValue。
+        //
+        // 那些键用 `accessibilityValue == "t9Digit"` 作为「这是数字键」的标记，
+        // insertKey 靠它把显示字符（ABC/MNO）换算成数字身份送给 RIME。
+        // 一旦被播报覆盖，后续按键会被当成普通字符键，
+        // 导致 T9 组合彻底错乱（CI 实测：应送 6 却送了 MNO）。
+        //
+        // 这类键的播报因此只能放弃——正确性优先于反馈。
+        if key.accessibilityValue == Self.t9DigitAccessibilityValue { return }
+
         key.accessibilityValue = text
 
         // 下一轮主循环再发 layoutChanged：
