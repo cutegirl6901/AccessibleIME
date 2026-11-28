@@ -77,6 +77,21 @@ jobs:
           '${{ needs.classify_change.outputs.base_sha }}'
           '${{ needs.classify_change.outputs.head_sha }}'
 
+  verify_speech_logic:
+    name: verify-speech-logic
+    # 播报逻辑的独立验证：纯 Foundation，Ubuntu 上几十秒跑完。
+    # macOS 池排队严重时，这是唯一能稳定拿到结果的通道。
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify mirror is in sync with KeyboardCore
+        run: bash scripts/check-speech-mirror.sh
+
+      - name: Run speech behavior tests
+        run: swift test --package-path Packages/SpeechLogicCheck
+
   format_swift:
     name: format-swift
     needs: [classify_change, lightweight_checks]
