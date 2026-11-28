@@ -17,10 +17,12 @@ import XCTest
 ///
 /// 这条测试走完整链路，直接断言用户手指下那个键的 value 变成候选词。
 /// 这正是「输入一个字符会不会播报候选」的可执行定义。
-@MainActor
-final class KeySpeechEndToEndTests: XCTestCase {
+/// `nonisolated` + 每个测试方法单独 `@MainActor`：
+/// XCTestCase 的 init 是 nonisolated，类级 @MainActor 会让 init 隔离不匹配。
+nonisolated final class KeySpeechEndToEndTests: XCTestCase {
 
     /// 与生产一致：26 键、中文、无 bootstrap 副作用。
+    @MainActor
     private final class FixtureController: KeyboardViewController {
         override func viewDidLoad() {
             // 跳过扩展 bootstrap，避免真实 librime 与宿主依赖。
@@ -62,6 +64,7 @@ final class KeySpeechEndToEndTests: XCTestCase {
         func pageDown() -> RimeOutput { makeOutput() }
     }
 
+    @MainActor
     private func makeFixture() -> FixtureController {
         let owner = FixtureController()
         owner.loadViewIfNeeded()
@@ -75,6 +78,7 @@ final class KeySpeechEndToEndTests: XCTestCase {
         return owner
     }
 
+    @MainActor
     private func descendants(_ root: UIView) -> [UIView] {
         var out: [UIView] = [root]
         for sub in root.subviews { out.append(contentsOf: descendants(sub)) }
@@ -82,6 +86,7 @@ final class KeySpeechEndToEndTests: XCTestCase {
     }
 
     /// 核心断言：按住 `w` 后，该键的 value 应包含候选「我」。
+    @MainActor
     func testKeyValueBecomesCandidateAfterPress() throws {
         let owner = makeFixture()
         let engine = StubRimeEngine()
@@ -118,6 +123,7 @@ final class KeySpeechEndToEndTests: XCTestCase {
     }
 
     /// 不同按键必须得到不同 value（防止「永远读同一个字」）。
+    @MainActor
     func testDifferentKeysProduceDifferentValues() throws {
         let owner = makeFixture()
         let engine = StubRimeEngine()
