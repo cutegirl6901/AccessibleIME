@@ -59,13 +59,15 @@ extension KeyboardViewController {
             revisionAtRegistration: controller.state.compositionRevision
         )
         deferredKeySpeechRegisteredCount += 1
-        ProbeLog.log("REGISTER", [
-            ("seq", String(sequence)),
-            ("kind", String(describing: kind)),
-            ("key", keyLabel),
-            ("rev", String(controller.state.compositionRevision)),
-            ("pipeline", controller.isResponsiveRimePipelineEnabled ? "async" : "sync"),
-        ])
+        var registerFields: [(String, String)] = []
+        registerFields.append(("seq", String(sequence)))
+        registerFields.append(("kind", String(describing: kind)))
+        registerFields.append(("key", keyLabel))
+        registerFields.append(("rev", String(controller.state.compositionRevision)))
+        registerFields.append(
+            ("pipeline", controller.isResponsiveRimePipelineEnabled ? "async" : "sync")
+        )
+        ProbeLog.log("REGISTER", registerFields)
         scheduleDeferredKeySpeechTimeout(sequence: sequence)
     }
 

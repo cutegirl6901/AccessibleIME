@@ -83,8 +83,7 @@ extension KeyboardViewController {
         // 只登记，不立即播报：异步引擎下 handle() 已经返回，但快照还没落地，
         // 此刻的 lastRimeOutput 是上一次的值。真正的读取在
         // onResponsivePresentationNeeded 里完成（见 beginDeferredKeySpeech 的注释）。
-        // 届时仍按通道的 timing 分两次投递：公告在 syncUI 之前（与 reloadData
-        // 同帧的公告会被系统丢弃，见 0.2.5 记录），焦点转移在其后。
+        // 投递统一在 syncUI 之后：候选栏数据在 syncUI 内部才刷新。
         beginDeferredKeySpeech(
             kind: KeySpeechComposer.classify(key: key),
             keyLabel: key,
